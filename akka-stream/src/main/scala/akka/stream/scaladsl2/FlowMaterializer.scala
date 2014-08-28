@@ -74,7 +74,12 @@ abstract class FlowMaterializer(val settings: MaterializerSettings) {
    * INTERNAL API
    * ops are stored in reverse order
    */
-  private[akka] def toPublisher[I, O](publisherNode: Ast.PublisherNode[I], ops: List[Ast.AstNode]): Publisher[O]
+  private[akka] def toPublisher[In, Out](publisherNode: Ast.PublisherNode[In], ops: List[Ast.AstNode]): Publisher[Out]
+
+  /**
+   * INTERNAL API
+   */
+  private[akka] def ductBuild[In, Out](ops: List[Ast.AstNode]): (Subscriber[In], Publisher[Out])
 
 }
 

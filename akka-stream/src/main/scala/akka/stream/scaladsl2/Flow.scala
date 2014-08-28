@@ -11,10 +11,11 @@ import org.reactivestreams.Subscriber
 import akka.stream.Transformer
 import akka.stream.impl.BlackholeSubscriber
 import akka.stream.impl2.Ast._
+import scala.annotation.unchecked.uncheckedVariance
+import akka.stream.impl.BlackholeSubscriber
+import scala.concurrent.Promise
 
-sealed trait Flow[-In, +Out] {
-  protected def ops: List[AstNode]
-}
+sealed trait Flow[-In, +Out]
 
 object FlowFrom {
   /**
@@ -35,20 +36,31 @@ object FlowFrom {
   def apply[T](p: Publisher[T]): PublisherFlow[T, T] = FlowFrom[T].withInput(PublisherIn(p))
 }
 
-trait Input[-In]
+trait Input[-In] {
+  def materialize(materializer: FlowMaterializer): (Publisher[In], AnyRef) @uncheckedVariance
+}
 
 /**
  * Default input.
  * Allows to materialize a Flow with this input to Subscriber.
  */
-final case class SubscriberIn[-In]() extends Input[In] {
-  def subscriber[I <: In]: Subscriber[I] = ???
+final case class SubscriberIn[In]() extends Input[In] {
+  override def materialize(materializer: FlowMaterializer): (Publisher[In], AnyRef) = {
+    val (s, p) = materializer.ductBuild[In, In](Nil) // FIXME this must be improved somehow
+    (p, s)
+  }
+
+  def subscriber[I <: In](m: MaterializedInput): Subscriber[I] =
+    m.getInputFor(this).asInstanceOf[Subscriber[I]]
 }
 
 /**
  * Input from Publisher.
  */
-final case class PublisherIn[-In](p: Publisher[_ >: In]) extends Input[In]
+final case class PublisherIn[In](p: Publisher[_ >: In]) extends Input[In] {
+  override def materialize(materializer: FlowMaterializer): (Publisher[In], AnyRef) =
+    (p.asInstanceOf[Publisher[In]], p)
+}
 
 /**
  * Input from Iterable
@@ -56,7 +68,10 @@ final case class PublisherIn[-In](p: Publisher[_ >: In]) extends Input[In]
  * Changing In from Contravariant to Covariant is needed because Iterable[+A].
  * But this brakes IterableIn variance and we get IterableIn(Seq(1,2,3)): IterableIn[Any]
  */
-final case class IterableIn[-In](i: immutable.Iterable[_ >: In]) extends Input[In]
+final case class IterableIn[In](i: immutable.Iterable[_ >: In]) extends Input[In] {
+  override def materialize(materializer: FlowMaterializer): (Publisher[In], AnyRef) =
+    (materializer.toPublisher(IterablePublisherNode(i), Nil), i) // FIXME this must be improved somehow
+}
 
 /**
  * Input from Future
@@ -64,31 +79,75 @@ final case class IterableIn[-In](i: immutable.Iterable[_ >: In]) extends Input[I
  * Changing In from Contravariant to Covariant is needed because Future[+A].
  * But this brakes FutureIn variance and we get FutureIn(Future{1}): FutureIn[Any]
  */
-final case class FutureIn[-In](f: Future[_ >: In]) extends Input[In]
+final case class FutureIn[In](f: Future[_ >: In]) extends Input[In] {
+  override def materialize(materializer: FlowMaterializer): (Publisher[In], AnyRef) = ???
+}
 
-trait Output[+Out]
+trait Output[+Out] {
+  def materialize(p: Publisher[Out] @uncheckedVariance, materializer: FlowMaterializer): AnyRef
+}
 
 /**
  * Default output.
  * Allows to materialize a Flow with this output to Publisher.
  */
 final case class PublisherOut[+Out]() extends Output[Out] {
-  def publisher[O >: Out]: Publisher[O] = ???
+  def materialize(p: Publisher[Out] @uncheckedVariance, materializer: FlowMaterializer): AnyRef = p
+  def publisher[O >: Out](m: MaterializedOutput): Publisher[O] = m.getOutputFor(this).asInstanceOf[Publisher[O]]
 }
 
 final case class BlackholeOut[+Out]() extends Output[Out] {
-  def publisher[O >: Out]: Publisher[O] = ???
+  override def materialize(p: Publisher[Out] @uncheckedVariance, materializer: FlowMaterializer): AnyRef = {
+    val s = new BlackholeSubscriber[Out](materializer.settings.maximumInputBufferSize)
+    p.subscribe(s)
+    s
+  }
 }
 
 /**
  * Output to a Subscriber.
  */
-final case class SubscriberOut[+Out](s: Subscriber[_ <: Out]) extends Output[Out]
+final case class SubscriberOut[+Out](s: Subscriber[_ <: Out]) extends Output[Out] {
+  override def materialize(p: Publisher[Out] @uncheckedVariance, materializer: FlowMaterializer): AnyRef = {
+    p.subscribe(s.asInstanceOf[Subscriber[Out]])
+    s
+  }
+}
+
+/**
+ * INTERNAL API
+ */
+private[akka] object ForeachOut {
+  private val ListOfUnit = List(())
+}
+
+/**
+ * Foreach output. Invokes the given function for each element. Completes the [[#future]] when
+ * all elements processed, or stream failed.
+ */
+final case class ForeachOut[Out](f: Out ⇒ Unit) extends Output[Out] { // FIXME variance?
+  override def materialize(p: Publisher[Out] @uncheckedVariance, materializer: FlowMaterializer): AnyRef = {
+    val promise = Promise[Unit]()
+    FlowFrom(p).transform("foreach", () ⇒ new Transformer[Out, Unit] {
+      override def onNext(in: Out) = { f(in); Nil }
+      override def onTermination(e: Option[Throwable]) = {
+        e match {
+          case None    ⇒ promise.success(())
+          case Some(e) ⇒ promise.failure(e)
+        }
+        Nil
+      }
+    }).consume()(materializer)
+    promise.future
+  }
+  def future(m: MaterializedOutput): Future[Unit] = m.getOutputFor(this).asInstanceOf[Future[Unit]]
+}
 
 /**
  * Fold output. Reduces output stream according to the given fold function.
  */
 final case class FoldOut[T, +Out](zero: T)(f: (T, Out) ⇒ T) extends Output[Out] {
+  override def materialize(p: Publisher[Out] @uncheckedVariance, materializer: FlowMaterializer): AnyRef = ???
   def future: Future[T] = ???
 }
 
@@ -135,6 +194,7 @@ trait HasOpenOutput[-In, +Out] extends Flow[In, Out] {
 
   def append[T](f: ProcessorFlow[Out, T]): Repr[In, T]
   def append[T](f: SubscriberFlow[Out, T]): Repr[In, T]#AfterCloseOutput[In, T]
+
 }
 
 /**
@@ -151,9 +211,9 @@ final case class ProcessorFlow[-In, +Out](ops: List[AstNode]) extends HasOpenOut
   def withInput[I <: In](in: Input[I]): AfterCloseInput[I, Out] = PublisherFlow(in, ops)
 
   override def prepend[T](f: ProcessorFlow[T, In]): Repr[T, Out] =
-    ProcessorFlow((f.ops.reverse ++: ops.reverse).reverse) // FIXME is this the right order?
+    ProcessorFlow(ops ::: f.ops)
   override def prepend[T](f: PublisherFlow[T, In]): Repr[T, Out]#AfterCloseInput[T, Out] =
-    PublisherFlow(f.input, (f.ops.reverse ++: ops.reverse).reverse) // FIXME is this the right order?
+    PublisherFlow(f.input, ops ::: f.ops)
 
   override def append[T](f: ProcessorFlow[Out, T]): Repr[In, T] = ProcessorFlow(f.ops ++: ops)
   override def append[T](f: SubscriberFlow[Out, T]): Repr[In, T]#AfterCloseOutput[In, T] =
@@ -171,9 +231,15 @@ final case class SubscriberFlow[-In, +Out](output: Output[Out], ops: List[AstNod
   def withoutOutput: ProcessorFlow[In, Out] = ProcessorFlow(ops)
 
   override def prepend[T](f: ProcessorFlow[T, In]): Repr[T, Out] =
-    SubscriberFlow(output, (f.ops.reverse ++: ops.reverse).reverse) // FIXME is this the right order?
+    SubscriberFlow(output, ops ::: f.ops)
   override def prepend[T](f: PublisherFlow[T, In]): Repr[T, Out]#AfterCloseInput[T, Out] =
-    RunnableFlow(f.input, output, (f.ops.reverse ++: ops.reverse).reverse) // FIXME is this the right order?
+    RunnableFlow(f.input, output, ops ::: f.ops)
+
+  def toSubscriber[I <: In]()(implicit materializer: FlowMaterializer): Subscriber[I] = {
+    val subIn = SubscriberIn[I]()
+    val mf = withInput(subIn).run()
+    subIn.subscriber(mf)
+  }
 }
 
 /**
@@ -192,6 +258,18 @@ final case class PublisherFlow[-In, +Out](input: Input[In], ops: List[AstNode]) 
   override def append[T](f: SubscriberFlow[Out, T]): Repr[In, T]#AfterCloseOutput[In, T] =
     RunnableFlow(input, f.output, f.ops ++: ops)
 
+  def toPublisher[U >: Out]()(implicit materializer: FlowMaterializer): Publisher[U] = {
+    val pubOut = PublisherOut[Out]()
+    val mf = withOutput(pubOut).run()
+    pubOut.publisher(mf)
+  }
+
+  def publishTo(subscriber: Subscriber[_ >: Out])(implicit materializer: FlowMaterializer): Unit =
+    toPublisher().subscribe(subscriber.asInstanceOf[Subscriber[Out]])
+
+  def consume()(implicit materializer: FlowMaterializer): Unit =
+    withOutput(BlackholeOut()).run()
+
 }
 
 /**
@@ -201,20 +279,28 @@ final case class RunnableFlow[-In, +Out](input: Input[In], output: Output[Out], 
   def withoutOutput: PublisherFlow[In, Out] = PublisherFlow(input, ops)
   def withoutInput: SubscriberFlow[In, Out] = SubscriberFlow(output, ops)
 
-  // FIXME
-  def run()(implicit materializer: FlowMaterializer): Unit =
-    produceTo(new BlackholeSubscriber[Any](materializer.settings.maximumInputBufferSize))
-
-  // FIXME replace with run and input/output factories
-  def toPublisher[U >: Out]()(implicit materializer: FlowMaterializer): Publisher[U] =
-    input match {
-      case PublisherIn(p)   ⇒ materializer.toPublisher(ExistingPublisher(p), ops)
-      case IterableIn(iter) ⇒ materializer.toPublisher(IterablePublisherNode(iter), ops)
-      case _                ⇒ ???
-    }
-
-  def produceTo(subscriber: Subscriber[_ >: Out])(implicit materializer: FlowMaterializer): Unit =
-    toPublisher().subscribe(subscriber.asInstanceOf[Subscriber[Out]])
-
+  def run()(implicit materializer: FlowMaterializer): MaterializedFlow = {
+    val (inPublisher, inValue) = input.materialize(materializer)
+    val p = materializer.toPublisher(ExistingPublisher(inPublisher), ops).asInstanceOf[Publisher[Out]]
+    val outValue = output.materialize(p, materializer)
+    new MaterializedFlow(input, inValue, output, outValue)
+  }
 }
 
+class MaterializedFlow(inKey: AnyRef, matIn: AnyRef, outKey: AnyRef, matOut: AnyRef) extends MaterializedInput with MaterializedOutput {
+  override def getInputFor(key: AnyRef): AnyRef =
+    if (key == inKey) matIn
+    else throw new IllegalArgumentException(s"Input key [$key] doesn't match the input [$inKey] of this flow")
+
+  def getOutputFor(key: AnyRef): AnyRef =
+    if (key == outKey) matOut
+    else throw new IllegalArgumentException(s"Output key [$key] doesn't match the output [$outKey] of this flow")
+}
+
+trait MaterializedInput {
+  def getInputFor(inKey: AnyRef): AnyRef
+}
+
+trait MaterializedOutput {
+  def getOutputFor(outKey: AnyRef): AnyRef
+}
