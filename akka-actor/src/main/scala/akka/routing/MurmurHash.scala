@@ -68,11 +68,11 @@ object MurmurHash {
   /**
    * Incorporates a new value into an existing hash.
    *
-   *  @param   hash    the prior hash value
-   *  @param  value    the new value to incorporate
-   *  @param magicA    a magic integer from the stream
-   *  @param magicB    a magic integer from a different stream
-   *  @return          the updated hash value
+   * @param   hash    the prior hash value
+   * @param  value    the new value to incorporate
+   * @param magicA    a magic integer from the stream
+   * @param magicB    a magic integer from a different stream
+   * @return          the updated hash value
    */
   def extendHash(hash: Int, value: Int, magicA: Int, magicB: Int): Int =
     (hash ^ rotl(value * magicA, 11) * magicB) * 3 + visibleMixer
@@ -115,7 +115,7 @@ object MurmurHash {
     var k = hiddenMagicB
     var j = 0
     while (j + 1 < s.length) {
-      val i = (s.charAt(j) << 16) + s.charAt(j + 1);
+      val i = (s.charAt(j) << 16) + s.charAt(j + 1)
       h = extendHash(h, i, c, k)
       c = nextMagicA(c)
       k = nextMagicB(k)

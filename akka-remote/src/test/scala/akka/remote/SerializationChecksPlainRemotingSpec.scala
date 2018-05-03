@@ -1,17 +1,17 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.testkit.AkkaSpec
 
 class SerializationChecksPlainRemotingSpec extends AkkaSpec {
 
-  "Settings serialize-messages and serialize-creators" must {
+  "Settings serialize-messages" must {
 
     "be on for tests" in {
-      system.settings.SerializeAllCreators should be(true)
-      system.settings.SerializeAllMessages should be(true)
+      system.settings.SerializeAllMessages should ===(true)
     }
 
   }

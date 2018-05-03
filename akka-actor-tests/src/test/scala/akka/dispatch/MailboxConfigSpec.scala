@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.dispatch
 
 import language.postfixOps
@@ -13,7 +14,6 @@ import akka.testkit.{ EventFilter, AkkaSpec }
 import scala.concurrent.{ Future, Await, ExecutionContext }
 import scala.concurrent.duration._
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 abstract class MailboxSpec extends AkkaSpec with BeforeAndAfterAll with BeforeAndAfterEach {
   def name: String
 
@@ -43,23 +43,23 @@ abstract class MailboxSpec extends AkkaSpec with BeforeAndAfterAll with BeforeAn
 
     "create a bounded mailbox with 10 capacity and with push timeout" in {
       val config = BoundedMailbox(10, 10 milliseconds)
-      config.capacity should be(10)
+      config.capacity should ===(10)
       val q = factory(config)
       ensureInitialMailboxState(config, q)
 
       for (i ← 1 to config.capacity) q.enqueue(testActor, exampleMessage)
 
-      q.numberOfMessages should be(config.capacity)
-      q.hasMessages should be(true)
+      q.numberOfMessages should ===(config.capacity)
+      q.hasMessages should ===(true)
 
       system.eventStream.subscribe(testActor, classOf[DeadLetter])
       q.enqueue(testActor, exampleMessage)
       expectMsg(DeadLetter(exampleMessage.message, system.deadLetters, testActor))
       system.eventStream.unsubscribe(testActor, classOf[DeadLetter])
 
-      q.dequeue should be(exampleMessage)
-      q.numberOfMessages should be(config.capacity - 1)
-      q.hasMessages should be(true)
+      q.dequeue should ===(exampleMessage)
+      q.numberOfMessages should ===(config.capacity - 1)
+      q.hasMessages should ===(true)
     }
 
     "dequeue what was enqueued properly for unbounded mailboxes" in {
@@ -86,16 +86,16 @@ abstract class MailboxSpec extends AkkaSpec with BeforeAndAfterAll with BeforeAn
 
   def ensureMailboxSize(q: MessageQueue, expected: Int): Unit = q.numberOfMessages match {
     case -1 | `expected` ⇒
-      q.hasMessages should be(expected != 0)
+      q.hasMessages should ===(expected != 0)
     case other ⇒
-      other should be(expected)
-      q.hasMessages should be(expected != 0)
+      other should ===(expected)
+      q.hasMessages should ===(expected != 0)
   }
 
   def ensureSingleConsumerEnqueueDequeue(config: MailboxType) {
     val q = factory(config)
     ensureMailboxSize(q, 0)
-    q.dequeue should be(null)
+    q.dequeue should ===(null)
     for (i ← 1 to 100) {
       q.enqueue(testActor, exampleMessage)
       ensureMailboxSize(q, i)
@@ -104,11 +104,11 @@ abstract class MailboxSpec extends AkkaSpec with BeforeAndAfterAll with BeforeAn
     ensureMailboxSize(q, 100)
 
     for (i ← 99 to 0 by -1) {
-      q.dequeue() should be(exampleMessage)
+      q.dequeue() should ===(exampleMessage)
       ensureMailboxSize(q, i)
     }
 
-    q.dequeue should be(null)
+    q.dequeue should ===(null)
     ensureMailboxSize(q, 0)
   }
 
@@ -117,64 +117,66 @@ abstract class MailboxSpec extends AkkaSpec with BeforeAndAfterAll with BeforeAn
     q match {
       case aQueue: BlockingQueue[_] ⇒
         config match {
-          case BoundedMailbox(capacity, _) ⇒ aQueue.remainingCapacity should be(capacity)
-          case UnboundedMailbox()          ⇒ aQueue.remainingCapacity should be(Int.MaxValue)
+          case BoundedMailbox(capacity, _) ⇒ aQueue.remainingCapacity should ===(capacity)
+          case UnboundedMailbox()          ⇒ aQueue.remainingCapacity should ===(Int.MaxValue)
         }
       case _ ⇒
     }
-    q.numberOfMessages should be(0)
-    q.hasMessages should be(false)
+    q.numberOfMessages should ===(0)
+    q.hasMessages should ===(false)
   }
 
-  def testEnqueueDequeue(config: MailboxType,
-                         enqueueN: Int = 10000,
-                         dequeueN: Int = 10000,
-                         parallel: Boolean = true): Unit = within(10 seconds) {
+  def testEnqueueDequeue(
+    config:   MailboxType,
+    enqueueN: Int         = 10000,
+    dequeueN: Int         = 10000,
+    parallel: Boolean     = true): Unit = within(10 seconds) {
     val q = factory(config)
     ensureInitialMailboxState(config, q)
 
-    EventFilter.warning(pattern = ".*received dead letter from Actor.*MailboxSpec/deadLetters.*",
+    EventFilter.warning(
+      pattern = "received dead letter without sender",
       occurrences = (enqueueN - dequeueN)) intercept {
 
-        def createProducer(fromNum: Int, toNum: Int): Future[Vector[Envelope]] = spawn {
-          val messages = Vector() ++ (for (i ← fromNum to toNum) yield createMessageInvocation(i))
-          for (i ← messages) q.enqueue(testActor, i)
-          messages
-        }
-
-        val producers = {
-          val step = 500
-          val ps = for (i ← (1 to enqueueN by step).toList) yield createProducer(i, Math.min(enqueueN, i + step - 1))
-
-          if (parallel == false)
-            ps foreach { Await.ready(_, remainingOrDefault) }
-
-          ps
-        }
-
-        def createConsumer: Future[Vector[Envelope]] = spawn {
-          var r = Vector[Envelope]()
-
-          while (producers.exists(_.isCompleted == false) || q.hasMessages)
-            Option(q.dequeue) foreach { message ⇒ r = r :+ message }
-
-          r
-        }
-
-        val consumers = List.fill(maxConsumers)(createConsumer)
-
-        val ps = producers.map(Await.result(_, remainingOrDefault))
-        val cs = consumers.map(Await.result(_, remainingOrDefault))
-
-        ps.map(_.size).sum should be(enqueueN) //Must have produced 1000 messages
-        cs.map(_.size).sum should be(dequeueN) //Must have consumed all produced messages
-        //No message is allowed to be consumed by more than one consumer
-        cs.flatten.distinct.size should be(dequeueN)
-        //All consumed messages should have been produced
-        (cs.flatten diff ps.flatten).size should be(0)
-        //The ones that were produced and not consumed
-        (ps.flatten diff cs.flatten).size should be(enqueueN - dequeueN)
+      def createProducer(fromNum: Int, toNum: Int): Future[Vector[Envelope]] = spawn {
+        val messages = Vector() ++ (for (i ← fromNum to toNum) yield createMessageInvocation(i))
+        for (i ← messages) q.enqueue(testActor, i)
+        messages
       }
+
+      val producers = {
+        val step = 500
+        val ps = for (i ← (1 to enqueueN by step).toList) yield createProducer(i, Math.min(enqueueN, i + step - 1))
+
+        if (parallel == false)
+          ps foreach { Await.ready(_, remainingOrDefault) }
+
+        ps
+      }
+
+      def createConsumer: Future[Vector[Envelope]] = spawn {
+        var r = Vector[Envelope]()
+
+        while (producers.exists(_.isCompleted == false) || q.hasMessages)
+          Option(q.dequeue) foreach { message ⇒ r = r :+ message }
+
+        r
+      }
+
+      val consumers = List.fill(maxConsumers)(createConsumer)
+
+      val ps = producers.map(Await.result(_, remainingOrDefault))
+      val cs = consumers.map(Await.result(_, remainingOrDefault))
+
+      ps.map(_.size).sum should ===(enqueueN) //Must have produced 1000 messages
+      cs.map(_.size).sum should ===(dequeueN) //Must have consumed all produced messages
+      //No message is allowed to be consumed by more than one consumer
+      cs.flatten.distinct.size should ===(dequeueN)
+      //All consumed messages should have been produced
+      (cs.flatten diff ps.flatten).size should ===(0)
+      //The ones that were produced and not consumed
+      (ps.flatten diff cs.flatten).size should ===(enqueueN - dequeueN)
+    }
   }
 }
 
@@ -192,6 +194,15 @@ class PriorityMailboxSpec extends MailboxSpec {
   def factory = {
     case UnboundedMailbox()                    ⇒ new UnboundedPriorityMailbox(comparator).create(None, None)
     case BoundedMailbox(capacity, pushTimeOut) ⇒ new BoundedPriorityMailbox(comparator, capacity, pushTimeOut).create(None, None)
+  }
+}
+
+class StablePriorityMailboxSpec extends MailboxSpec {
+  val comparator = PriorityGenerator(_.##)
+  lazy val name = "The stable priority mailbox implementation"
+  def factory = {
+    case UnboundedMailbox()                    ⇒ new UnboundedStablePriorityMailbox(comparator).create(None, None)
+    case BoundedMailbox(capacity, pushTimeOut) ⇒ new BoundedStablePriorityMailbox(comparator, capacity, pushTimeOut).create(None, None)
   }
 }
 
@@ -222,7 +233,6 @@ object CustomMailboxSpec {
   }
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class CustomMailboxSpec extends AkkaSpec(CustomMailboxSpec.config) {
   "Dispatcher configuration" must {
     "support custom mailboxType" in {
@@ -232,7 +242,7 @@ class CustomMailboxSpec extends AkkaSpec(CustomMailboxSpec.config) {
         case _                 ⇒ true
       }, 1 second, 10 millis)
       val queue = actor.asInstanceOf[ActorRefWithCell].underlying.asInstanceOf[ActorCell].mailbox.messageQueue
-      queue.getClass should be(classOf[CustomMailboxSpec.MyMailbox])
+      queue.getClass should ===(classOf[CustomMailboxSpec.MyMailbox])
     }
   }
 }

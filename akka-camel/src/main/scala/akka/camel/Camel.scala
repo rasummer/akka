@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.camel
@@ -80,15 +80,14 @@ class CamelSettings private[camel] (config: Config, dynamicAccess: DynamicAccess
    */
   final val AutoAck: Boolean = config.getBoolean("akka.camel.consumer.auto-ack")
 
-  /**
-   *
-   */
   final val JmxStatistics: Boolean = config.getBoolean("akka.camel.jmx")
 
   /**
    * enables or disables streamingCache on the Camel Context
    */
   final val StreamingCache: Boolean = config.getBoolean("akka.camel.streamingCache")
+
+  final val ProducerChildDispatcher: String = config.getString("akka.camel.producer.use-dispatcher")
 
   final val Conversions: (String, RouteDefinition) ⇒ RouteDefinition = {
     val specifiedConversions = {
@@ -106,7 +105,7 @@ class CamelSettings private[camel] (config: Config, dynamicAccess: DynamicAccess
     (s: String, r: RouteDefinition) ⇒ conversions.get(s).fold(r)(r.convertBodyTo)
   }
   /**
-   * Configured setting, determine the class used to load/retrive the instance of the Camel Context
+   * Configured setting, determine the class used to load/retrieve the instance of the Camel Context
    */
   final val ContextProvider: ContextProvider = {
     val fqcn = config.getString("akka.camel.context-provider")
@@ -127,7 +126,6 @@ class CamelSettings private[camel] (config: Config, dynamicAccess: DynamicAccess
  *
  * @see akka.actor.ExtensionId
  * @see akka.actor.ExtensionIdProvider
- *
  */
 object CamelExtension extends ExtensionId[Camel] with ExtensionIdProvider {
 

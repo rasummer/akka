@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.japi.pf;
@@ -14,7 +14,6 @@ import scala.runtime.BoxedUnit;
  * @param <S> the state type
  * @param <D> the data type
  *
- * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
  */
 public class FSMStopBuilder<S, D> {
 

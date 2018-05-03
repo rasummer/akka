@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.remote.testkit
@@ -128,8 +128,8 @@ class LogRoleReplace {
 
     line match {
       case RoleStarted(jvm, role, host, port) ⇒
-        replacements += (jvm -> role)
-        replacements += ((host + ":" + port) -> role)
+        replacements += (jvm → role)
+        replacements += ((host + ":" + port) → role)
         false
       case _ ⇒ true
     }

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.persistence
@@ -10,111 +10,155 @@ import akka.testkit._
 object SnapshotSpec {
   case object TakeSnapshot
 
-  class SaveSnapshotTestProcessor(name: String, probe: ActorRef) extends NamedProcessor(name) {
+  class SaveSnapshotTestPersistentActor(name: String, probe: ActorRef) extends NamedPersistentActor(name) {
     var state = List.empty[String]
-    def receive = {
-      case Persistent(payload, snr) ⇒ state = s"${payload}-${snr}" :: state
-      case TakeSnapshot             ⇒ saveSnapshot(state)
-      case SaveSnapshotSuccess(md)  ⇒ probe ! md.sequenceNr
-      case GetState                 ⇒ probe ! state.reverse
+
+    override def receiveRecover: Receive = {
+      case payload: String                     ⇒ state = s"${payload}-${lastSequenceNr}" :: state
+      case SnapshotOffer(_, snapshot: List[_]) ⇒ state = snapshot.asInstanceOf[List[String]]
+    }
+
+    override def receiveCommand = {
+      case payload: String ⇒
+        persist(payload) { _ ⇒
+          state = s"${payload}-${lastSequenceNr}" :: state
+        }
+      case TakeSnapshot            ⇒ saveSnapshot(state)
+      case SaveSnapshotSuccess(md) ⇒ probe ! md.sequenceNr
+      case GetState                ⇒ probe ! state.reverse
     }
   }
 
-  class LoadSnapshotTestProcessor(name: String, probe: ActorRef) extends NamedProcessor(name) {
-    def receive = {
-      case Persistent(payload, snr) ⇒ probe ! s"${payload}-${snr}"
-      case SnapshotOffer(md, s)     ⇒ probe ! ((md, s))
-      case other                    ⇒ probe ! other
+  class LoadSnapshotTestPersistentActor(name: String, _recovery: Recovery, probe: ActorRef) extends NamedPersistentActor(name) {
+    override def recovery: Recovery = _recovery
+
+    override def receiveRecover: Receive = {
+      case payload: String              ⇒ probe ! s"${payload}-${lastSequenceNr}"
+      case offer @ SnapshotOffer(md, s) ⇒ probe ! offer
+      case other                        ⇒ probe ! other
     }
-    override def preStart() = ()
+
+    override def receiveCommand = {
+      case "done" ⇒ probe ! "done"
+      case payload: String ⇒
+        persist(payload) { _ ⇒
+          probe ! s"${payload}-${lastSequenceNr}"
+        }
+      case offer @ SnapshotOffer(md, s) ⇒ probe ! offer
+      case other                        ⇒ probe ! other
+    }
+  }
+
+  class IgnoringSnapshotTestPersistentActor(name: String, _recovery: Recovery, probe: ActorRef) extends NamedPersistentActor(name) {
+    override def recovery: Recovery = _recovery
+
+    override def receiveRecover: Receive = {
+      case payload: String                             ⇒ probe ! s"${payload}-${lastSequenceNr}"
+      case other if !other.isInstanceOf[SnapshotOffer] ⇒ probe ! other
+    }
+
+    override def receiveCommand = {
+      case "done" ⇒ probe ! "done"
+      case payload: String ⇒
+        persist(payload) { _ ⇒
+          probe ! s"${payload}-${lastSequenceNr}"
+        }
+      case other ⇒ probe ! other
+    }
   }
 
   final case class Delete1(metadata: SnapshotMetadata)
   final case class DeleteN(criteria: SnapshotSelectionCriteria)
 
-  class DeleteSnapshotTestProcessor(name: String, probe: ActorRef) extends LoadSnapshotTestProcessor(name, probe) {
-    override def receive = receiveDelete orElse super.receive
+  class DeleteSnapshotTestPersistentActor(name: String, _recovery: Recovery, probe: ActorRef) extends LoadSnapshotTestPersistentActor(name, _recovery, probe) {
+    override def receiveCommand = receiveDelete orElse super.receiveCommand
     def receiveDelete: Receive = {
-      case Delete1(metadata) ⇒ deleteSnapshot(metadata.sequenceNr, metadata.timestamp)
+      case Delete1(metadata) ⇒ deleteSnapshot(metadata.sequenceNr)
       case DeleteN(criteria) ⇒ deleteSnapshots(criteria)
     }
   }
 }
 
-class SnapshotSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "SnapshotSpec")) with PersistenceSpec with ImplicitSender {
+class SnapshotSpec extends PersistenceSpec(PersistenceSpec.config("leveldb", "SnapshotSpec")) with ImplicitSender {
   import SnapshotSpec._
   import SnapshotProtocol._
 
   override protected def beforeEach() {
     super.beforeEach()
 
-    val processor = system.actorOf(Props(classOf[SaveSnapshotTestProcessor], name, testActor))
-    processor ! Persistent("a")
-    processor ! TakeSnapshot
-    processor ! Persistent("b")
-    processor ! TakeSnapshot
-    processor ! Persistent("c")
-    processor ! Persistent("d")
-    processor ! TakeSnapshot
-    processor ! Persistent("e")
-    processor ! Persistent("f")
+    val persistentActor = system.actorOf(Props(classOf[SaveSnapshotTestPersistentActor], name, testActor))
+    persistentActor ! "a"
+    persistentActor ! TakeSnapshot
+    persistentActor ! "b"
+    persistentActor ! TakeSnapshot
+    persistentActor ! "c"
+    persistentActor ! "d"
+    persistentActor ! TakeSnapshot
+    persistentActor ! "e"
+    persistentActor ! "f"
     expectMsgAllOf(1L, 2L, 4L)
   }
 
-  "A processor" must {
+  "A persistentActor" must {
     "recover state starting from the most recent snapshot" in {
-      val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
+      val persistentActor = system.actorOf(Props(classOf[LoadSnapshotTestPersistentActor], name, Recovery(), testActor))
       val persistenceId = name
 
-      processor ! Recover()
-
       expectMsgPF() {
-        case (SnapshotMetadata(`persistenceId`, 4, timestamp), state) ⇒
-          state should be(List("a-1", "b-2", "c-3", "d-4").reverse)
+        case SnapshotOffer(SnapshotMetadata(`persistenceId`, 4, timestamp), state) ⇒
+          state should ===(List("a-1", "b-2", "c-3", "d-4").reverse)
           timestamp should be > (0L)
       }
       expectMsg("e-5")
       expectMsg("f-6")
       expectMsg(RecoveryCompleted)
     }
-    "recover state starting from the most recent snapshot matching an upper sequence number bound" in {
-      val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
+    "recover completely if snapshot is not handled" in {
+      val persistentActor = system.actorOf(Props(classOf[IgnoringSnapshotTestPersistentActor], name, Recovery(), testActor))
       val persistenceId = name
 
-      processor ! Recover(toSequenceNr = 3)
+      expectMsg("a-1")
+      expectMsg("b-2")
+      expectMsg("c-3")
+      expectMsg("d-4")
+      expectMsg("e-5")
+      expectMsg("f-6")
+      expectMsg(RecoveryCompleted)
+    }
+    "recover state starting from the most recent snapshot matching an upper sequence number bound" in {
+      val persistentActor = system.actorOf(Props(classOf[LoadSnapshotTestPersistentActor], name, Recovery(toSequenceNr = 3), testActor))
+      val persistenceId = name
 
       expectMsgPF() {
-        case (SnapshotMetadata(`persistenceId`, 2, timestamp), state) ⇒
-          state should be(List("a-1", "b-2").reverse)
+        case SnapshotOffer(SnapshotMetadata(`persistenceId`, 2, timestamp), state) ⇒
+          state should ===(List("a-1", "b-2").reverse)
           timestamp should be > (0L)
       }
       expectMsg("c-3")
       expectMsg(RecoveryCompleted)
     }
     "recover state starting from the most recent snapshot matching an upper sequence number bound (without further replay)" in {
-      val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
+      val persistentActor = system.actorOf(Props(classOf[LoadSnapshotTestPersistentActor], name, Recovery(toSequenceNr = 4), testActor))
       val persistenceId = name
 
-      processor ! Recover(toSequenceNr = 4)
-      processor ! "done"
+      persistentActor ! "done"
 
       expectMsgPF() {
-        case (SnapshotMetadata(`persistenceId`, 4, timestamp), state) ⇒
-          state should be(List("a-1", "b-2", "c-3", "d-4").reverse)
+        case SnapshotOffer(SnapshotMetadata(`persistenceId`, 4, timestamp), state) ⇒
+          state should ===(List("a-1", "b-2", "c-3", "d-4").reverse)
           timestamp should be > (0L)
       }
       expectMsg(RecoveryCompleted)
       expectMsg("done")
     }
     "recover state starting from the most recent snapshot matching criteria" in {
-      val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
+      val recovery = Recovery(fromSnapshot = SnapshotSelectionCriteria(maxSequenceNr = 2))
+      val persistentActor = system.actorOf(Props(classOf[LoadSnapshotTestPersistentActor], name, recovery, testActor))
       val persistenceId = name
 
-      processor ! Recover(fromSnapshot = SnapshotSelectionCriteria(maxSequenceNr = 2))
-
       expectMsgPF() {
-        case (SnapshotMetadata(`persistenceId`, 2, timestamp), state) ⇒
-          state should be(List("a-1", "b-2").reverse)
+        case SnapshotOffer(SnapshotMetadata(`persistenceId`, 2, timestamp), state) ⇒
+          state should ===(List("a-1", "b-2").reverse)
           timestamp should be > (0L)
       }
       expectMsg("c-3")
@@ -124,87 +168,86 @@ class SnapshotSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "SnapshotS
       expectMsg(RecoveryCompleted)
     }
     "recover state starting from the most recent snapshot matching criteria and an upper sequence number bound" in {
-      val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
+      val recovery = Recovery(fromSnapshot = SnapshotSelectionCriteria(maxSequenceNr = 2), toSequenceNr = 3)
+      val persistentActor = system.actorOf(Props(classOf[LoadSnapshotTestPersistentActor], name, recovery, testActor))
       val persistenceId = name
 
-      processor ! Recover(fromSnapshot = SnapshotSelectionCriteria(maxSequenceNr = 2), toSequenceNr = 3)
-
       expectMsgPF() {
-        case (SnapshotMetadata(`persistenceId`, 2, timestamp), state) ⇒
-          state should be(List("a-1", "b-2").reverse)
+        case SnapshotOffer(SnapshotMetadata(`persistenceId`, 2, timestamp), state) ⇒
+          state should ===(List("a-1", "b-2").reverse)
           timestamp should be > (0L)
       }
       expectMsg("c-3")
       expectMsg(RecoveryCompleted)
     }
     "recover state from scratch if snapshot based recovery is disabled" in {
-      val processor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
-
-      processor ! Recover(fromSnapshot = SnapshotSelectionCriteria.None, toSequenceNr = 3)
+      val recovery = Recovery(fromSnapshot = SnapshotSelectionCriteria.None, toSequenceNr = 3)
+      val persistentActor = system.actorOf(Props(classOf[LoadSnapshotTestPersistentActor], name, recovery, testActor))
 
       expectMsg("a-1")
       expectMsg("b-2")
       expectMsg("c-3")
       expectMsg(RecoveryCompleted)
     }
-    "support single message deletions" in {
+    "support single snapshot deletions" in {
       val deleteProbe = TestProbe()
 
-      val processor1 = system.actorOf(Props(classOf[DeleteSnapshotTestProcessor], name, testActor))
+      // recover persistentActor from 3rd snapshot and then delete snapshot
+      val recovery = Recovery(toSequenceNr = 4)
+      val persistentActor1 = system.actorOf(Props(classOf[DeleteSnapshotTestPersistentActor], name, recovery, testActor))
       val persistenceId = name
 
       system.eventStream.subscribe(deleteProbe.ref, classOf[DeleteSnapshot])
 
-      // recover processor from 3rd snapshot and then delete snapshot
-      processor1 ! Recover(toSequenceNr = 4)
-      processor1 ! "done"
+      persistentActor1 ! "done"
 
       val metadata = expectMsgPF() {
-        case (md @ SnapshotMetadata(`persistenceId`, 4, _), state) ⇒
-          state should be(List("a-1", "b-2", "c-3", "d-4").reverse)
+        case SnapshotOffer(md @ SnapshotMetadata(`persistenceId`, 4, _), state) ⇒
+          state should ===(List("a-1", "b-2", "c-3", "d-4").reverse)
           md
       }
       expectMsg(RecoveryCompleted)
       expectMsg("done")
 
-      processor1 ! Delete1(metadata)
+      persistentActor1 ! Delete1(metadata)
       deleteProbe.expectMsgType[DeleteSnapshot]
+      expectMsgPF() { case m @ DeleteSnapshotSuccess(SnapshotMetadata(`persistenceId`, 4, _)) ⇒ }
 
-      // recover processor from 2nd snapshot (3rd was deleted) plus replayed messages
-      val processor2 = system.actorOf(Props(classOf[DeleteSnapshotTestProcessor], name, testActor))
+      // recover persistentActor from 2nd snapshot (3rd was deleted) plus replayed messages
+      val persistentActor2 = system.actorOf(Props(classOf[DeleteSnapshotTestPersistentActor], name, recovery, testActor))
 
-      processor2 ! Recover(toSequenceNr = 4)
-      expectMsgPF() {
-        case (md @ SnapshotMetadata(`persistenceId`, 2, _), state) ⇒
-          state should be(List("a-1", "b-2").reverse)
+      expectMsgPF(hint = "" + SnapshotOffer(SnapshotMetadata(`persistenceId`, 2, 0), null)) {
+        case SnapshotOffer(md @ SnapshotMetadata(`persistenceId`, 2, _), state) ⇒
+          state should ===(List("a-1", "b-2").reverse)
           md
       }
       expectMsg("c-3")
       expectMsg("d-4")
       expectMsg(RecoveryCompleted)
     }
-    "support bulk message deletions" in {
+    "support bulk snapshot deletions" in {
       val deleteProbe = TestProbe()
 
-      val processor1 = system.actorOf(Props(classOf[DeleteSnapshotTestProcessor], name, testActor))
+      val recovery = Recovery(toSequenceNr = 4)
+      val persistentActor1 = system.actorOf(Props(classOf[DeleteSnapshotTestPersistentActor], name, recovery, testActor))
       val persistenceId = name
 
       system.eventStream.subscribe(deleteProbe.ref, classOf[DeleteSnapshots])
 
-      // recover processor and the delete first three (= all) snapshots
-      processor1 ! Recover(toSequenceNr = 4)
-      processor1 ! DeleteN(SnapshotSelectionCriteria(maxSequenceNr = 4))
+      // recover persistentActor and the delete first three (= all) snapshots
+      val criteria = SnapshotSelectionCriteria(maxSequenceNr = 4)
+      persistentActor1 ! DeleteN(criteria)
       expectMsgPF() {
-        case (md @ SnapshotMetadata(`persistenceId`, 4, _), state) ⇒
-          state should be(List("a-1", "b-2", "c-3", "d-4").reverse)
+        case SnapshotOffer(md @ SnapshotMetadata(`persistenceId`, 4, _), state) ⇒
+          state should ===(List("a-1", "b-2", "c-3", "d-4").reverse)
       }
       expectMsg(RecoveryCompleted)
       deleteProbe.expectMsgType[DeleteSnapshots]
+      expectMsgPF() { case DeleteSnapshotsSuccess(`criteria`) ⇒ }
 
-      // recover processor from replayed messages (all snapshots deleted)
-      val processor2 = system.actorOf(Props(classOf[DeleteSnapshotTestProcessor], name, testActor))
+      // recover persistentActor from replayed messages (all snapshots deleted)
+      val persistentActor2 = system.actorOf(Props(classOf[DeleteSnapshotTestPersistentActor], name, recovery, testActor))
 
-      processor2 ! Recover(toSequenceNr = 4)
       expectMsg("a-1")
       expectMsg("b-2")
       expectMsg("c-3")

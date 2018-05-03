@@ -1,18 +1,19 @@
 /**
- * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.persistence.journal
 
 import akka.actor.{ ActorLogging, ActorRef, Props }
 import akka.persistence.journal.JournalPerfSpec.{ BenchActor, Cmd, ResetCounter }
-import akka.persistence.{ PersistentActor, PluginSpec }
+import akka.persistence.{ PersistentActor }
 import akka.testkit.TestProbe
-
 import scala.collection.immutable
 import scala.concurrent.duration._
+import com.typesafe.config.Config
 
 object JournalPerfSpec {
-  class BenchActor(val persistenceId: String, replyTo: ActorRef, replyAfter: Int) extends PersistentActor
+  class BenchActor(override val persistenceId: String, replyTo: ActorRef, replyAfter: Int) extends PersistentActor
     with ActorLogging {
 
     var counter = 0
@@ -69,14 +70,13 @@ object JournalPerfSpec {
  * if their plugin's performance is roughly as expected. It also validates the plugin still works under "more messages" scenarios.
  *
  * In case your journal plugin needs some kind of setup or teardown, override the `beforeAll` or `afterAll`
- * methods (don't forget to call `super` in your overriden methods).
+ * methods (don't forget to call `super` in your overridden methods).
  *
  * For a Java and JUnit consumable version of the TCK please refer to [[akka.persistence.japi.journal.JavaJournalPerfSpec]].
  *
  * @see [[akka.persistence.journal.JournalSpec]]
  */
-trait JournalPerfSpec extends PluginSpec {
-  this: JournalSpec ⇒
+abstract class JournalPerfSpec(config: Config) extends JournalSpec(config) {
 
   private val testProbe = TestProbe()
 
@@ -88,9 +88,9 @@ trait JournalPerfSpec extends PluginSpec {
     testProbe.expectMsg(awaitDuration, cmnds.last)
   }
 
-  /** Executes a block of code multiple times (no warmup) */
+  /** Executes a block of code multiple times (no warm-up) */
   def measure(msg: Duration ⇒ String)(block: ⇒ Unit): Unit = {
-    val measurements = Array.ofDim[Duration](measurementIterations)
+    val measurements = new Array[Duration](measurementIterations)
     var i = 0
     while (i < measurementIterations) {
       val start = System.nanoTime()
@@ -113,7 +113,7 @@ trait JournalPerfSpec extends PluginSpec {
   /** Override in order to customize timeouts used for expectMsg, in order to tune the awaits to your journal's perf */
   private def awaitDuration: FiniteDuration = awaitDurationMillis.millis
 
-  /** Numbe of messages sent to the PersistentActor under test for each test iteration */
+  /** Number of messages sent to the PersistentActor under test for each test iteration */
   def eventsCount: Int = 10 * 1000
 
   /** Number of measurement iterations each test will be run. */

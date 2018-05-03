@@ -1,15 +1,15 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
- * Copyright (C) 2012-2013 Eligotech BV.
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+ * Copyright (C) 2012-2016 Eligotech BV.
  */
 
 package akka.persistence.journal.leveldb
 
 import scala.concurrent.Future
-
 import akka.persistence._
 import akka.persistence.journal.AsyncRecovery
 import org.iq80.leveldb.DBIterator
+import akka.persistence.journal.leveldb.LeveldbJournal.ReplayedTaggedMessage
 
 /**
  * INTERNAL API.
@@ -40,34 +40,22 @@ private[persistence] trait LeveldbRecovery extends AsyncRecovery { this: Leveldb
         val nextKey = keyFromBytes(nextEntry.getKey)
         if (nextKey.sequenceNr > toSequenceNr) {
           // end iteration here
-        } else if (nextKey.channelId != 0) {
-          // phantom confirmation (just advance iterator)
+        } else if (isDeletionKey(nextKey)) {
+          // this case is needed to discard old events with deletion marker
           go(iter, nextKey, ctr, replayCallback)
         } else if (key.persistenceId == nextKey.persistenceId) {
           val msg = persistentFromBytes(nextEntry.getValue)
           val del = deletion(iter, nextKey)
-          val cnf = confirms(iter, nextKey, Nil)
           if (ctr < max) {
-            replayCallback(msg.update(confirms = cnf, deleted = del))
+            if (!del) replayCallback(msg)
             go(iter, nextKey, ctr + 1L, replayCallback)
           }
         }
       }
     }
 
-    @scala.annotation.tailrec
-    def confirms(iter: DBIterator, key: Key, channelIds: List[String]): List[String] = {
-      if (iter.hasNext) {
-        val nextEntry = iter.peekNext()
-        val nextKey = keyFromBytes(nextEntry.getKey)
-        if (key.persistenceId == nextKey.persistenceId && key.sequenceNr == nextKey.sequenceNr) {
-          val nextValue = new String(nextEntry.getValue, "UTF-8")
-          iter.next()
-          confirms(iter, nextKey, nextValue :: channelIds)
-        } else channelIds
-      } else channelIds
-    }
-
+    // need to have this to be able to read journal created with 2.3.x, which
+    // supported deletion of individual events
     def deletion(iter: DBIterator, key: Key): Boolean = {
       if (iter.hasNext) {
         val nextEntry = iter.peekNext()
@@ -81,6 +69,39 @@ private[persistence] trait LeveldbRecovery extends AsyncRecovery { this: Leveldb
 
     withIterator { iter ⇒
       val startKey = Key(persistenceId, if (fromSequenceNr < 1L) 1L else fromSequenceNr, 0)
+      iter.seek(keyToBytes(startKey))
+      go(iter, startKey, 0L, replayCallback)
+    }
+  }
+
+  def asyncReplayTaggedMessages(tag: String, fromSequenceNr: Long, toSequenceNr: Long, max: Long)(replayCallback: ReplayedTaggedMessage ⇒ Unit): Future[Unit] = {
+    val tagNid = tagNumericId(tag)
+    Future(replayTaggedMessages(tag, tagNid, fromSequenceNr: Long, toSequenceNr, max: Long)(replayCallback))(replayDispatcher)
+  }
+
+  def replayTaggedMessages(tag: String, tagNid: Int, fromSequenceNr: Long, toSequenceNr: Long, max: Long)(
+    replayCallback: ReplayedTaggedMessage ⇒ Unit): Unit = {
+
+    @scala.annotation.tailrec
+    def go(iter: DBIterator, key: Key, ctr: Long, replayCallback: ReplayedTaggedMessage ⇒ Unit) {
+      if (iter.hasNext) {
+        val nextEntry = iter.next()
+        val nextKey = keyFromBytes(nextEntry.getKey)
+        if (nextKey.sequenceNr > toSequenceNr) {
+          // end iteration here
+        } else if (key.persistenceId == nextKey.persistenceId) {
+          val msg = persistentFromBytes(nextEntry.getValue)
+          if (ctr < max) {
+            replayCallback(ReplayedTaggedMessage(msg, tag, nextKey.sequenceNr))
+            go(iter, nextKey, ctr + 1L, replayCallback)
+          }
+        }
+      }
+    }
+
+    withIterator { iter ⇒
+      // fromSequenceNr is exclusive, i.e. start with +1
+      val startKey = Key(tagNid, if (fromSequenceNr < 1L) 1L else fromSequenceNr + 1, 0)
       iter.seek(keyToBytes(startKey))
       go(iter, startKey, 0L, replayCallback)
     }

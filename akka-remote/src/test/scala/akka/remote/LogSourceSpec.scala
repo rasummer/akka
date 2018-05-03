@@ -1,15 +1,14 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
-import scala.concurrent.duration._
 import akka.testkit.AkkaSpec
 import akka.actor.Actor
 import akka.actor.ActorLogging
 import akka.actor.Props
 import akka.event.Logging
-import akka.testkit.ImplicitSender
 import akka.testkit.TestProbe
 import akka.actor.Deploy
 import akka.event.Logging.Info
@@ -24,11 +23,10 @@ object LogSourceSpec {
   }
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class LogSourceSpec extends AkkaSpec(
   """
     akka.loglevel = INFO
-    akka.actor.provider = "akka.remote.RemoteActorRefProvider"
+    akka.actor.provider = remote
     akka.remote.netty.tcp.port = 0
   """) {
 
@@ -48,7 +46,7 @@ class LogSourceSpec extends AkkaSpec(
     "should include host and port for local LogSource" in {
       reporter ! "hello"
       val info = logProbe.expectMsgType[Info]
-      info.message should be("hello")
+      info.message should ===("hello")
       val defaultAddress = system.asInstanceOf[ExtendedActorSystem].provider.getDefaultAddress
       info.logSource should include(defaultAddress.toString)
     }

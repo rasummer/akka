@@ -1,26 +1,31 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
+import java.util.UUID
+
 import language.implicitConversions
-import org.scalatest.{ Suite, Outcome, Canceled }
+import org.scalatest.{ Canceled, Outcome, Suite }
 import org.scalatest.exceptions.TestCanceledException
 import com.typesafe.config.Config
 import com.typesafe.config.ConfigFactory
 import akka.remote.testconductor.RoleName
-import akka.remote.testkit.{ STMultiNodeSpec, MultiNodeSpec }
+import akka.remote.testkit.{ FlightRecordingSupport, MultiNodeSpec, STMultiNodeSpec }
 import akka.testkit._
 import akka.testkit.TestEvent._
-import akka.actor.{ ActorSystem, Address }
+import akka.actor.{ Actor, ActorRef, ActorSystem, Address, Deploy, PoisonPill, Props, RootActorPath }
 import akka.event.Logging.ErrorLevel
+
 import scala.concurrent.duration._
 import scala.collection.immutable
 import java.util.concurrent.ConcurrentHashMap
+
 import akka.remote.DefaultFailureDetectorRegistry
-import akka.actor.ActorRef
-import akka.actor.Actor
-import akka.actor.RootActorPath
+import akka.cluster.ClusterEvent.{ CurrentClusterState, MemberEvent, MemberExited, MemberRemoved }
+
+import scala.concurrent.Await
 
 object MultiNodeClusterSpec {
 
@@ -31,8 +36,9 @@ object MultiNodeClusterSpec {
   def clusterConfig(failureDetectorPuppet: Boolean): Config =
     if (failureDetectorPuppet) clusterConfigWithFailureDetectorPuppet else clusterConfig
 
-  def clusterConfig: Config = ConfigFactory.parseString("""
-    akka.actor.provider = akka.cluster.ClusterActorRefProvider
+  def clusterConfig: Config = ConfigFactory.parseString(s"""
+    akka.actor.provider = cluster
+    akka.actor.warn-about-java-serializer-usage = off
     akka.cluster {
       jmx.enabled                         = off
       gossip-interval                     = 200 ms
@@ -41,15 +47,24 @@ object MultiNodeClusterSpec {
       periodic-tasks-initial-delay        = 300 ms
       publish-stats-interval              = 0 s # always, when it happens
       failure-detector.heartbeat-interval = 500 ms
+
+      run-coordinated-shutdown-when-down = off
     }
     akka.loglevel = INFO
     akka.log-dead-letters = off
     akka.log-dead-letters-during-shutdown = off
-    akka.remote.log-remote-lifecycle-events = off
+    akka.remote {
+      log-remote-lifecycle-events = off
+      artery.advanced.flight-recorder {
+        enabled=on
+        destination=target/flight-recorder-${UUID.randomUUID().toString}.afr
+      }
+    }
     akka.loggers = ["akka.testkit.TestEventListener"]
     akka.test {
       single-expect-default = 5 s
     }
+
     """)
 
   // sometimes we need to coordinate test shutdown with messages instead of barriers
@@ -61,7 +76,7 @@ object MultiNodeClusterSpec {
 
   class EndActor(testActor: ActorRef, target: Option[Address]) extends Actor {
     import EndActor._
-    def receive = {
+    def receive: Receive = {
       case SendEnd ⇒
         target foreach { t ⇒
           context.actorSelection(RootActorPath(t) / self.path.elements) ! End
@@ -75,27 +90,32 @@ object MultiNodeClusterSpec {
   }
 }
 
-trait MultiNodeClusterSpec extends Suite with STMultiNodeSpec with WatchedByCoroner { self: MultiNodeSpec ⇒
+trait MultiNodeClusterSpec extends Suite with STMultiNodeSpec with WatchedByCoroner with FlightRecordingSupport { self: MultiNodeSpec ⇒
 
   override def initialParticipants = roles.size
 
   private val cachedAddresses = new ConcurrentHashMap[RoleName, Address]
 
-  override def atStartup(): Unit = {
+  override protected def atStartup(): Unit = {
     startCoroner()
     muteLog()
+    self.atStartup()
   }
 
-  override def afterTermination(): Unit = {
+  override protected def afterTermination(): Unit = {
+    self.afterTermination()
     stopCoroner()
+    if (failed || sys.props.get("akka.remote.artery.always-dump-flight-recorder").isDefined) {
+      printFlightRecording()
+    }
+    deleteFlightRecorderFile()
   }
 
   override def expectedTestDuration = 60.seconds
 
   def muteLog(sys: ActorSystem = system): Unit = {
     if (!sys.log.isDebugEnabled) {
-      Seq(".*Metrics collection has started successfully.*",
-        ".*Metrics will be retreived from MBeans.*",
+      Seq(
         ".*Cluster Node.* - registered cluster JMX MBean.*",
         ".*Cluster Node.* - is starting up.*",
         ".*Shutting down cluster Node.*",
@@ -109,8 +129,6 @@ trait MultiNodeClusterSpec extends Suite with STMultiNodeSpec with WatchedByCoro
         classOf[ClusterHeartbeatSender.HeartbeatRsp],
         classOf[GossipEnvelope],
         classOf[GossipStatus],
-        classOf[MetricsGossipEnvelope],
-        classOf[ClusterEvent.ClusterMetricsChanged],
         classOf[InternalClusterAction.Tick],
         classOf[akka.actor.PoisonPill],
         classOf[akka.dispatch.sysmsg.DeathWatchNotification],
@@ -239,8 +257,8 @@ trait MultiNodeClusterSpec extends Suite with STMultiNodeSpec with WatchedByCoro
   def assertMembers(gotMembers: Iterable[Member], expectedAddresses: Address*): Unit = {
     import Member.addressOrdering
     val members = gotMembers.toIndexedSeq
-    members.size should be(expectedAddresses.length)
-    expectedAddresses.sorted.zipWithIndex.foreach { case (a, i) ⇒ members(i).address should be(a) }
+    members.size should ===(expectedAddresses.length)
+    expectedAddresses.sorted.zipWithIndex.foreach { case (a, i) ⇒ members(i).address should ===(a) }
   }
 
   /**
@@ -270,7 +288,8 @@ trait MultiNodeClusterSpec extends Suite with STMultiNodeSpec with WatchedByCoro
       val expectedLeader = roleOfLeader(nodesInCluster)
       val leader = clusterView.leader
       val isLeader = leader == Some(clusterView.selfAddress)
-      assert(isLeader == isNode(expectedLeader),
+      assert(
+        isLeader == isNode(expectedLeader),
         "expectedLeader [%s], got leader [%s], members [%s]".format(expectedLeader, leader, clusterView.members))
       clusterView.status should (be(MemberStatus.Up) or be(MemberStatus.Leaving))
     }
@@ -280,28 +299,70 @@ trait MultiNodeClusterSpec extends Suite with STMultiNodeSpec with WatchedByCoro
    * Also asserts that nodes in the 'canNotBePartOfMemberRing' are *not* part of the cluster ring.
    */
   def awaitMembersUp(
-    numberOfMembers: Int,
-    canNotBePartOfMemberRing: Set[Address] = Set.empty,
-    timeout: FiniteDuration = 25.seconds): Unit = {
+    numberOfMembers:          Int,
+    canNotBePartOfMemberRing: Set[Address]   = Set.empty,
+    timeout:                  FiniteDuration = 25.seconds): Unit = {
     within(timeout) {
       if (!canNotBePartOfMemberRing.isEmpty) // don't run this on an empty set
         awaitAssert(canNotBePartOfMemberRing foreach (a ⇒ clusterView.members.map(_.address) should not contain (a)))
-      awaitAssert(clusterView.members.size should be(numberOfMembers))
-      awaitAssert(clusterView.members.map(_.status) should be(Set(MemberStatus.Up)))
+      awaitAssert(clusterView.members.size should ===(numberOfMembers))
+      awaitAssert(clusterView.members.map(_.status) should ===(Set(MemberStatus.Up)))
       // clusterView.leader is updated by LeaderChanged, await that to be updated also
-      val expectedLeader = clusterView.members.headOption.map(_.address)
-      awaitAssert(clusterView.leader should be(expectedLeader))
+      val expectedLeader = clusterView.members.collectFirst {
+        case m if m.dataCenter == cluster.settings.SelfDataCenter ⇒ m.address
+      }
+      awaitAssert(clusterView.leader should ===(expectedLeader))
     }
   }
 
+  def awaitMemberRemoved(toBeRemovedAddress: Address, timeout: FiniteDuration = 25.seconds): Unit = within(timeout) {
+    if (toBeRemovedAddress == cluster.selfAddress) {
+      enterBarrier("registered-listener")
+
+      cluster.leave(toBeRemovedAddress)
+      enterBarrier("member-left")
+
+      awaitCond(cluster.isTerminated, remaining)
+      enterBarrier("member-shutdown")
+    } else {
+      val exitingLatch = TestLatch()
+
+      val awaiter = system.actorOf(Props(new Actor {
+        def receive = {
+          case MemberRemoved(m, _) if m.address == toBeRemovedAddress ⇒
+            exitingLatch.countDown()
+          case _ ⇒
+          // ignore
+        }
+      }).withDeploy(Deploy.local))
+      cluster.subscribe(awaiter, classOf[MemberEvent])
+      enterBarrier("registered-listener")
+
+      // in the meantime member issues leave
+      enterBarrier("member-left")
+
+      // verify that the member is EXITING
+      try Await.result(exitingLatch, timeout) catch {
+        case cause: Exception ⇒
+          throw new AssertionError(s"Member ${toBeRemovedAddress} was not removed within ${timeout}!", cause)
+      }
+      awaiter ! PoisonPill // you've done your job, now die
+
+      enterBarrier("member-shutdown")
+      markNodeAsUnavailable(toBeRemovedAddress)
+    }
+
+    enterBarrier("member-totally-shutdown")
+  }
+
   def awaitAllReachable(): Unit =
-    awaitAssert(clusterView.unreachableMembers should be(Set.empty))
+    awaitAssert(clusterView.unreachableMembers should ===(Set.empty))
 
   /**
    * Wait until the specified nodes have seen the same gossip overview.
    */
   def awaitSeenSameState(addresses: Address*): Unit =
-    awaitAssert((addresses.toSet -- clusterView.seenBy) should be(Set.empty))
+    awaitAssert((addresses.toSet diff clusterView.seenBy) should ===(Set.empty))
 
   /**
    * Leader according to the address ordering of the roles.
@@ -341,7 +402,7 @@ trait MultiNodeClusterSpec extends Suite with STMultiNodeSpec with WatchedByCoro
    */
   def markNodeAsUnavailable(address: Address): Unit = {
     if (isFailureDetectorPuppet) {
-      // before marking it as unavailble there should be at least one heartbeat
+      // before marking it as unavailable there should be at least one heartbeat
       // to create the FailureDetectorPuppet in the FailureDetectorRegistry
       cluster.failureDetector.heartbeat(address)
       failureDetectorPuppet(address) foreach (_.markNodeAsUnavailable())

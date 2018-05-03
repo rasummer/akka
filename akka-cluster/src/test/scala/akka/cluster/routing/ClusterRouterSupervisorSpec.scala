@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster.routing
 
 import akka.testkit._
@@ -21,10 +22,10 @@ object ClusterRouterSupervisorSpec {
 
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class ClusterRouterSupervisorSpec extends AkkaSpec("""
-  akka.actor.provider = "akka.cluster.ClusterActorRefProvider"
+  akka.actor.provider = "cluster"
   akka.remote.netty.tcp.port = 0
+  akka.remote.artery.canonical.port = 0
 """) {
 
   import ClusterRouterSupervisorSpec._
@@ -41,8 +42,7 @@ class ClusterRouterSupervisorSpec extends AkkaSpec("""
           }), ClusterRouterPoolSettings(
           totalInstances = 1,
           maxInstancesPerNode = 1,
-          allowLocalRoutees = true,
-          useRole = None)).
+          allowLocalRoutees = true)).
           props(Props(classOf[KillableActor], testActor)), name = "therouter")
 
       router ! "go away"

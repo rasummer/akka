@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.event.japi
 
 import akka.util.Subclassification
@@ -184,21 +185,21 @@ abstract class ScanningEventBus[E, S, C] extends EventBus[E, S, C] {
 }
 
 /**
- * Java API: See documentation for [[akka.event.ActorClassification]]
+ * Java API: See documentation for [[akka.event.ManagedActorClassification]]
  * An EventBus where the Subscribers are ActorRefs and the Classifier is ActorRef
  * Means that ActorRefs "listen" to other ActorRefs
  * E is the Event type
  */
-abstract class ActorEventBus[E](system: ActorSystem) extends EventBus[E, ActorRef, ActorRef] {
-  private val bus = new akka.event.ActorEventBus with akka.event.ActorClassification with akka.event.ActorClassifier {
+abstract class ManagedActorEventBus[E](system: ActorSystem) extends EventBus[E, ActorRef, ActorRef] {
+  private val bus = new akka.event.ActorEventBus with akka.event.ManagedActorClassification with akka.event.ActorClassifier {
     type Event = E
 
-    override val system = ActorEventBus.this.system
+    override val system = ManagedActorEventBus.this.system
 
-    override protected def mapSize: Int = ActorEventBus.this.mapSize
+    override protected def mapSize: Int = ManagedActorEventBus.this.mapSize
 
     override protected def classify(event: E): ActorRef =
-      ActorEventBus.this.classify(event)
+      ManagedActorEventBus.this.classify(event)
   }
 
   /**
@@ -216,3 +217,4 @@ abstract class ActorEventBus[E](system: ActorSystem) extends EventBus[E, ActorRe
   override def unsubscribe(subscriber: ActorRef): Unit = bus.unsubscribe(subscriber)
   override def publish(event: E): Unit = bus.publish(event)
 }
+

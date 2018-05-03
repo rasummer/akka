@@ -1,3 +1,7 @@
+/**
+ * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka
 
 import sbt._
@@ -6,30 +10,21 @@ import com.typesafe.sbt.SbtScalariform
 import com.typesafe.sbt.SbtScalariform.ScalariformKeys
 
 object Formatting {
-  lazy val formatSettings = SbtScalariform.scalariformSettings ++ Seq(
-    ScalariformKeys.preferences in Compile  := formattingPreferences,
-    ScalariformKeys.preferences in Test     := formattingPreferences
+  import scalariform.formatter.preferences._
+
+  lazy val formatSettings = Seq(
+    ScalariformKeys.preferences := setPreferences(ScalariformKeys.preferences.value),
+    ScalariformKeys.preferences in Compile := setPreferences(ScalariformKeys.preferences.value),
+    ScalariformKeys.preferences in Test := setPreferences(ScalariformKeys.preferences.value),
+    ScalariformKeys.preferences in MultiJvm := setPreferences(ScalariformKeys.preferences.value)
   )
 
-  lazy val docFormatSettings = SbtScalariform.scalariformSettings ++ Seq(
-    ScalariformKeys.preferences in Compile  := docFormattingPreferences,
-    ScalariformKeys.preferences in Test     := docFormattingPreferences,
-    ScalariformKeys.preferences in MultiJvm := docFormattingPreferences
-  )
-
-  def formattingPreferences = {
-    import scalariform.formatter.preferences._
-    FormattingPreferences()
-      .setPreference(RewriteArrowSymbols, true)
-      .setPreference(AlignParameters, true)
-      .setPreference(AlignSingleLineCaseStatements, true)
-  }
-
-  def docFormattingPreferences = {
-    import scalariform.formatter.preferences._
-    FormattingPreferences()
-      .setPreference(RewriteArrowSymbols, false)
-      .setPreference(AlignParameters, true)
-      .setPreference(AlignSingleLineCaseStatements, true)
-  }
+  def setPreferences(preferences: IFormattingPreferences) = preferences
+    .setPreference(RewriteArrowSymbols, true)
+    .setPreference(AlignParameters, true)
+    .setPreference(AlignSingleLineCaseStatements, true)
+    .setPreference(DoubleIndentConstructorArguments, false)
+    .setPreference(DoubleIndentMethodDeclaration, false)
+    .setPreference(DanglingCloseParenthesis, Preserve)
+    .setPreference(NewlineAtEndOfFile, true)
 }

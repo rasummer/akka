@@ -1,71 +1,135 @@
+/**
+ * Copyright (C) 2016-2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka
 
+import com.typesafe.sbt.osgi.OsgiKeys
 import com.typesafe.sbt.osgi.SbtOsgi._
+import com.typesafe.sbt.osgi.SbtOsgi.autoImport._
 import sbt._
 import sbt.Keys._
 
 object OSGi {
 
-  val Seq(scalaEpoch, scalaMajor) = """(\d+)\.(\d+)\..*""".r.unapplySeq(Dependencies.Versions.scalaVersion).get.map(_.toInt)
-
   // The included osgiSettings that creates bundles also publish the jar files
   // in the .../bundles directory which makes testing locally published artifacts
   // a pain. Create bundles but publish them to the normal .../jars directory.
   def osgiSettings = defaultOsgiSettings ++ Seq(
-    packagedArtifact in (Compile, packageBin) <<= (artifact in (Compile, packageBin), OsgiKeys.bundle).identityMap
+    packagedArtifact in (Compile, packageBin) := ((artifact in (Compile, packageBin)).value, OsgiKeys.bundle.value),
+    // This will fail the build instead of accidentally removing classes from the resulting artifact.
+    // Each package contained in a project MUST be known to be private or exported, if it's undecided we MUST resolve this
+    OsgiKeys.failOnUndecidedPackage := true,
+    // By default an entry is generated from module group-id, but our modules do not adhere to such package naming
+    OsgiKeys.privatePackage := Seq(),
+    // Explicitly specify the version of JavaSE required #23795 (rather depend on
+    // figuring that out from the JDK it was built with)
+    OsgiKeys.requireCapability := "osgi.ee;filter:=\"(&(osgi.ee=JavaSE)(version>=1.8))\""
   )
 
   val actor = osgiSettings ++ Seq(
     OsgiKeys.exportPackage := Seq("akka*"),
     OsgiKeys.privatePackage := Seq("akka.osgi.impl"),
     //akka-actor packages are not imported, as contained in the CP
-    OsgiKeys.importPackage := (osgiOptionalImports map optionalResolution) ++ Seq("!sun.misc", scalaImport(), configImport(), "*"),
+    OsgiKeys.importPackage := (osgiOptionalImports map optionalResolution) ++ Seq("!sun.misc", scalaJava8CompatImport(), scalaVersion(scalaImport).value, configImport(), "*"),
     // dynamicImportPackage needed for loading classes defined in configuration
-    OsgiKeys.dynamicImportPackage := Seq("*")
-  )
+    OsgiKeys.dynamicImportPackage := Seq("*"))
 
   val agent = exports(Seq("akka.agent.*"))
 
   val camel = exports(Seq("akka.camel.*"))
 
-  val cluster = exports(Seq("akka.cluster.*"), imports = Seq(protobufImport()))
+  val cluster = exports(Seq("akka.cluster.*"))
+
+  val clusterTools = exports(Seq("akka.cluster.singleton.*", "akka.cluster.client.*", "akka.cluster.pubsub.*"))
+
+  val clusterSharding = exports(Seq("akka.cluster.sharding.*"))
+
+  val clusterMetrics = exports(Seq("akka.cluster.metrics.*"), imports = Seq(kamonImport(), sigarImport()))
+
+  val distributedData = exports(Seq("akka.cluster.ddata.*"))
+
+  val contrib = exports(Seq("akka.contrib.*"))
 
   val osgi = exports(Seq("akka.osgi.*"))
 
-  val osgiDiningHakkersSampleApi = exports(Seq("akka.sample.osgi.api"))
+  val protobuf = exports(Seq("akka.protobuf.*"))
 
-  val osgiDiningHakkersSampleCommand = osgiSettings ++ Seq(OsgiKeys.bundleActivator := Option("akka.sample.osgi.command.Activator"), OsgiKeys.privatePackage := Seq("akka.sample.osgi.command"))
+  val remote = exports(Seq("akka.remote.*"))
 
-  val osgiDiningHakkersSampleCore = exports(Seq("")) ++ Seq(OsgiKeys.bundleActivator := Option("akka.sample.osgi.activation.Activator"), OsgiKeys.privatePackage := Seq("akka.sample.osgi.internal", "akka.sample.osgi.activation", "akka.sample.osgi.service"))
+  val parsing = exports(
+    Seq("akka.parboiled2.*", "akka.shapeless.*"),
+    imports = Seq(optionalResolution("scala.quasiquotes")))
 
-  val osgiDiningHakkersSampleUncommons = exports(Seq("org.uncommons.maths.random")) ++ Seq(OsgiKeys.privatePackage := Seq("org.uncommons.maths.binary", "org.uncommons.maths", "org.uncommons.maths.number"))
+  val httpCore = exports(Seq("akka.http.*"), imports = Seq(scalaJava8CompatImport()))
 
-  val remote = exports(Seq("akka.remote.*"), imports = Seq(protobufImport()))
+  val http = exports(
+    Seq("akka.http.impl.server") ++
+      Seq(
+        "akka.http.$DSL$.server.*",
+        "akka.http.$DSL$.client.*",
+        "akka.http.$DSL$.coding.*",
+        "akka.http.$DSL$.common.*",
+        "akka.http.$DSL$.marshalling.*",
+        "akka.http.$DSL$.unmarshalling.*") flatMap { p ⇒
+          Seq(p.replace("$DSL$", "scaladsl"), p.replace("$DSL$", "javadsl"))
+        },
+    imports = Seq(
+      scalaJava8CompatImport(),
+      akkaImport("akka.stream.*"),
+      akkaImport("akka.parboiled2.*")))
+
+  val httpTestkit = exports(Seq("akka.http.scaladsl.testkit.*", "akka.http.javadsl.testkit.*"))
+
+  val httpSprayJson = exports(Seq("akka.http.scaladsl.marshallers.sprayjson"))
+
+  val httpXml = exports(Seq("akka.http.scaladsl.marshallers.xml"))
+
+  val httpJackson = exports(Seq("akka.http.javadsl.marshallers.jackson"))
+
+  val stream =
+    exports(
+      packages = Seq(
+        "akka.stream.*",
+        "com.typesafe.sslconfig.akka.*"),
+      imports = Seq(scalaJava8CompatImport(), scalaParsingCombinatorImport())) ++
+      Seq(OsgiKeys.requireBundle := Seq(s"""com.typesafe.sslconfig;bundle-version="${Dependencies.sslConfigVersion}""""))
+
+  val streamTestkit = exports(Seq("akka.stream.testkit.*"))
 
   val slf4j = exports(Seq("akka.event.slf4j.*"))
 
-  val persistence = exports(Seq("akka.persistence.*"), imports = Seq(protobufImport()))
+  val persistence = exports(
+    Seq("akka.persistence.*"),
+    imports = Seq(optionalResolution("org.fusesource.leveldbjni.*"), optionalResolution("org.iq80.leveldb.*")))
+
+  val persistenceQuery = exports(Seq("akka.persistence.query.*"))
 
   val testkit = exports(Seq("akka.testkit.*"))
-
-  val zeroMQ = exports(Seq("akka.zeromq.*"), imports = Seq(protobufImport()) )
 
   val osgiOptionalImports = Seq(
     // needed because testkit is normally not used in the application bundle,
     // but it should still be included as transitive dependency and used by BundleDelegatingClassLoader
-    // to be able to find refererence.conf
-    "akka.testkit",
-    "com.google.protobuf")
+    // to be able to find reference.conf
+    "akka.testkit")
 
   def exports(packages: Seq[String] = Seq(), imports: Seq[String] = Nil) = osgiSettings ++ Seq(
-    OsgiKeys.importPackage := imports ++ defaultImports,
-    OsgiKeys.exportPackage := packages
-  )
-  def defaultImports = Seq("!sun.misc", akkaImport(), configImport(), scalaImport(), "*")
-  def akkaImport(packageName: String = "akka.*") = versionedImport(packageName, "2.4", "2.5")
-  def configImport(packageName: String = "com.typesafe.config.*") = versionedImport(packageName, "1.2.0", "1.3.0")
-  def protobufImport(packageName: String = "com.google.protobuf.*") = versionedImport(packageName, "2.5.0", "2.6.0")
-  def scalaImport(packageName: String = "scala.*") = versionedImport(packageName, s"$scalaEpoch.$scalaMajor", s"$scalaEpoch.${scalaMajor+1}")
+    OsgiKeys.importPackage := imports ++ scalaVersion(defaultImports).value,
+    OsgiKeys.exportPackage := packages)
+  def defaultImports(scalaVersion: String) = Seq("!sun.misc", akkaImport(), configImport(), "!scala.compat.java8.*",
+    "!scala.util.parsing.*", scalaImport(scalaVersion), "*")
+  def akkaImport(packageName: String = "akka.*") = versionedImport(packageName, "2.5", "2.6")
+  def configImport(packageName: String = "com.typesafe.config.*") = versionedImport(packageName, "1.3.0", "1.4.0")
+  def scalaImport(version: String) = {
+    val packageName = "scala.*"
+    val ScalaVersion = """(\d+)\.(\d+)\..*""".r
+    val ScalaVersion(epoch, major) = version
+    versionedImport(packageName, s"$epoch.$major", s"$epoch.${major.toInt + 1}")
+  }
+  def scalaJava8CompatImport(packageName: String = "scala.compat.java8.*") = versionedImport(packageName, "0.7.0", "1.0.0")
+  def scalaParsingCombinatorImport(packageName: String = "scala.util.parsing.combinator.*") = versionedImport(packageName, "1.0.4", "1.1.0")
+  def kamonImport(packageName: String = "kamon.sigar.*") = optionalResolution(versionedImport(packageName, "1.6.5", "1.6.6"))
+  def sigarImport(packageName: String = "org.hyperic.*") = optionalResolution(versionedImport(packageName, "1.6.5", "1.6.6"))
   def optionalResolution(packageName: String) = "%s;resolution:=optional".format(packageName)
   def versionedImport(packageName: String, lower: String, upper: String) = s"""$packageName;version="[$lower,$upper)""""
 }

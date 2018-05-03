@@ -1,10 +1,9 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.camel.internal.component
 
-import language.postfixOps
 import java.util.{ Map ⇒ JMap }
 import org.apache.camel._
 import org.apache.camel.impl.{ DefaultProducer, DefaultEndpoint, DefaultComponent }
@@ -12,9 +11,9 @@ import akka.actor._
 import akka.pattern._
 import scala.beans.BeanProperty
 import scala.concurrent.duration._
-import scala.concurrent.{ ExecutionContext, Future }
+import scala.concurrent.{ Future }
 import scala.util.control.NonFatal
-import java.util.concurrent.{ TimeUnit, TimeoutException, CountDownLatch }
+import java.util.concurrent.{ TimeoutException, CountDownLatch }
 import akka.util.Timeout
 import akka.camel.internal.CamelExchangeAdapter
 import akka.camel.{ ActorNotRegisteredException, Camel, Ack, FailureResult, CamelMessage }
@@ -30,8 +29,6 @@ import scala.util.{ Failure, Success, Try }
  * `ActorComponent` to the [[org.apache.camel.CamelContext]] under the 'actor' component name.
  * Messages are sent to [[akka.camel.Consumer]] actors through a [[akka.camel.internal.component.ActorEndpoint]] that
  * this component provides.
- *
- *
  */
 private[camel] class ActorComponent(camel: Camel, system: ActorSystem) extends DefaultComponent {
   /**
@@ -51,13 +48,12 @@ private[camel] class ActorComponent(camel: Camel, system: ActorSystem) extends D
  * Actors are referenced using actor endpoint URIs of the following format:
  * <code>[actorPath]?[options]%s</code>,
  * where <code>[actorPath]</code> refers to the actor path to the actor.
- *
- *
  */
-private[camel] class ActorEndpoint(uri: String,
-                                   comp: ActorComponent,
-                                   val path: ActorEndpointPath,
-                                   val camel: Camel) extends DefaultEndpoint(uri, comp) with ActorEndpointConfig {
+private[camel] class ActorEndpoint(
+  uri:       String,
+  comp:      ActorComponent,
+  val path:  ActorEndpointPath,
+  val camel: Camel) extends DefaultEndpoint(uri, comp) with ActorEndpointConfig {
 
   /**
    * The ActorEndpoint only supports receiving messages from Camel.
@@ -87,7 +83,6 @@ private[camel] class ActorEndpoint(uri: String,
 /**
  * INTERNAL API
  * Configures the `ActorEndpoint`. This needs to be a `bean` for Camel purposes.
- *
  */
 private[camel] trait ActorEndpointConfig {
   def path: ActorEndpointPath
@@ -99,12 +94,10 @@ private[camel] trait ActorEndpointConfig {
 }
 
 /**
- * Sends the in-message of an exchange to an untyped actor, identified by an [[akka.camel.internal.component.ActorEndPoint]]
+ * Sends the in-message of an exchange to an untyped actor, identified by an [[akka.camel.internal.component.ActorEndpoint]]
  *
- * @see akka.camel.component.ActorComponent
- * @see akka.camel.component.ActorEndpoint
- *
- *
+ * @see akka.camel.internal.component.ActorComponent
+ * @see akka.camel.internal.component.ActorEndpoint
  */
 private[camel] class ActorProducer(val endpoint: ActorEndpoint, camel: Camel) extends DefaultProducer(endpoint) with AsyncProcessor {
   /**
@@ -182,7 +175,7 @@ private[camel] class ActorProducer(val endpoint: ActorEndpoint, camel: Camel) ex
     path.findActorIn(camel.system) getOrElse (throw new ActorNotRegisteredException(path.actorPath))
 
   private[this] def messageFor(exchange: CamelExchangeAdapter) =
-    exchange.toRequestMessage(Map(CamelMessage.MessageExchangeId -> exchange.getExchangeId))
+    exchange.toRequestMessage(Map(CamelMessage.MessageExchangeId → exchange.getExchangeId))
 }
 
 /**
@@ -206,7 +199,6 @@ private[camel] object DurationTypeConverter extends TypeConverterSupport {
  * @param actorPath the String representation of the path to the actor
  */
 private[camel] case class ActorEndpointPath private (actorPath: String) {
-  import ActorEndpointPath._
   require(actorPath != null)
   require(actorPath.length() > 0)
   require(actorPath.startsWith("akka://"))

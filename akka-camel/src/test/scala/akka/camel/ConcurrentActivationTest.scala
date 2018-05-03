@@ -1,9 +1,9 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.camel
 
-import language.postfixOps
 import org.scalatest.WordSpec
 import org.scalatest.Matchers
 import scala.concurrent.{ Promise, Await, Future }
@@ -58,18 +58,18 @@ class ConcurrentActivationTest extends WordSpec with Matchers with NonSharedCame
         }
         val (activations, deactivations) = Await.result(allRefsFuture, 10.seconds.dilated)
         // should be the size of the activated activated producers and consumers
-        activations.size should be(2 * number * number)
+        activations.size should ===(2 * number * number)
         // should be the size of the activated activated producers and consumers
-        deactivations.size should be(2 * number * number)
+        deactivations.size should ===(2 * number * number)
         def partitionNames(refs: immutable.Seq[ActorRef]) = refs.map(_.path.name).partition(_.startsWith("concurrent-test-echo-consumer"))
         def assertContainsSameElements(lists: (Seq[_], Seq[_])) {
           val (a, b) = lists
-          a.intersect(b).size should be(a.size)
+          a.intersect(b).size should ===(a.size)
         }
         val (activatedConsumerNames, activatedProducerNames) = partitionNames(activations)
         val (deactivatedConsumerNames, deactivatedProducerNames) = partitionNames(deactivations)
-        assertContainsSameElements(activatedConsumerNames -> deactivatedConsumerNames)
-        assertContainsSameElements(activatedProducerNames -> deactivatedProducerNames)
+        assertContainsSameElements(activatedConsumerNames → deactivatedConsumerNames)
+        assertContainsSameElements(activatedProducerNames → deactivatedProducerNames)
       } finally {
         system.eventStream.publish(TestEvent.UnMute(eventFilter))
       }
@@ -96,7 +96,7 @@ class ConsumerBroadcast(promise: Promise[(Future[List[List[ActorRef]]], Future[L
         val routee = context.actorOf(Props(classOf[Registrar], i, number, activationListPromise, deactivationListPromise), "registrar-" + i)
         routee.path.toString
       }
-      promise.success(Future.sequence(allActivationFutures) -> Future.sequence(allDeactivationFutures))
+      promise.success(Future.sequence(allActivationFutures) → Future.sequence(allDeactivationFutures))
 
       broadcaster = Some(context.actorOf(BroadcastGroup(routeePaths).props(), "registrarRouter"))
     case reg: Any ⇒
@@ -134,8 +134,8 @@ class Registrar(val start: Int, val number: Int, activationsPromise: Promise[Lis
       actorRefs.foreach { aref ⇒
         context.stop(aref)
         val result = camel.deactivationFutureFor(aref)
-        result.onFailure {
-          case e ⇒ log.error("deactivationFutureFor {} failed: {}", aref, e.getMessage)
+        result.failed.foreach {
+          e ⇒ log.error("deactivationFutureFor {} failed: {}", aref, e.getMessage)
         }
         deActivations += result
         if (deActivations.size == number * 2) {
@@ -148,8 +148,8 @@ class Registrar(val start: Int, val number: Int, activationsPromise: Promise[Lis
     val ref = context.actorOf(Props(actor), name)
     actorRefs = actorRefs + ref
     val result = camel.activationFutureFor(ref)
-    result.onFailure {
-      case e ⇒ log.error("activationFutureFor {} failed: {}", ref, e.getMessage)
+    result.failed.foreach {
+      e ⇒ log.error("activationFutureFor {} failed: {}", ref, e.getMessage)
     }
     activations += result
   }

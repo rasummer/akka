@@ -1,8 +1,12 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.remote.transport
 
 import akka.testkit.{ DefaultTimeout, AkkaSpec }
 import akka.remote.transport.TestTransport.SwitchableLoggedBehavior
-import scala.concurrent.{ Await, Promise }
+import scala.concurrent.{ Await, Future, Promise }
 import scala.util.Failure
 import akka.AkkaException
 import scala.util.control.NoStackTrace
@@ -14,23 +18,23 @@ object SwitchableLoggedBehaviorSpec {
 class SwitchableLoggedBehaviorSpec extends AkkaSpec with DefaultTimeout {
   import akka.remote.transport.SwitchableLoggedBehaviorSpec._
 
-  private def defaultBehavior = new SwitchableLoggedBehavior[Unit, Int]((_) ⇒ Promise.successful(3).future, (_) ⇒ ())
+  private def defaultBehavior = new SwitchableLoggedBehavior[Unit, Int]((_) ⇒ Future.successful(3), (_) ⇒ ())
 
   "A SwitchableLoggedBehavior" must {
 
     "execute default behavior" in {
       val behavior = defaultBehavior
 
-      Await.result(behavior(()), timeout.duration) should be(3)
+      Await.result(behavior(()), timeout.duration) should ===(3)
     }
 
     "be able to push generic behavior" in {
       val behavior = defaultBehavior
 
-      behavior.push((_) ⇒ Promise.successful(4).future)
-      Await.result(behavior(()), timeout.duration) should be(4)
+      behavior.push((_) ⇒ Future.successful(4))
+      Await.result(behavior(()), timeout.duration) should ===(4)
 
-      behavior.push((_) ⇒ Promise.failed(TestException).future)
+      behavior.push((_) ⇒ Future.failed(TestException))
       behavior(()).value match {
         case Some(Failure(`TestException`)) ⇒
         case _                              ⇒ fail("Expected exception")
@@ -41,8 +45,8 @@ class SwitchableLoggedBehaviorSpec extends AkkaSpec with DefaultTimeout {
       val behavior = defaultBehavior
       behavior.pushConstant(5)
 
-      Await.result(behavior(()), timeout.duration) should be(5)
-      Await.result(behavior(()), timeout.duration) should be(5)
+      Await.result(behavior(()), timeout.duration) should ===(5)
+      Await.result(behavior(()), timeout.duration) should ===(5)
     }
 
     "be able to push failure behavior" in {
@@ -59,16 +63,16 @@ class SwitchableLoggedBehaviorSpec extends AkkaSpec with DefaultTimeout {
       val behavior = defaultBehavior
 
       behavior.pushConstant(5)
-      Await.result(behavior(()), timeout.duration) should be(5)
+      Await.result(behavior(()), timeout.duration) should ===(5)
 
       behavior.pushConstant(7)
-      Await.result(behavior(()), timeout.duration) should be(7)
+      Await.result(behavior(()), timeout.duration) should ===(7)
 
       behavior.pop()
-      Await.result(behavior(()), timeout.duration) should be(5)
+      Await.result(behavior(()), timeout.duration) should ===(5)
 
       behavior.pop()
-      Await.result(behavior(()), timeout.duration) should be(3)
+      Await.result(behavior(()), timeout.duration) should ===(3)
 
     }
 
@@ -78,7 +82,7 @@ class SwitchableLoggedBehaviorSpec extends AkkaSpec with DefaultTimeout {
       behavior.pop()
       behavior.pop()
 
-      Await.result(behavior(()), timeout.duration) should be(3)
+      Await.result(behavior(()), timeout.duration) should ===(3)
     }
 
     "enable delayed completition" in {
@@ -86,7 +90,7 @@ class SwitchableLoggedBehaviorSpec extends AkkaSpec with DefaultTimeout {
       val controlPromise = behavior.pushDelayed
       val f = behavior(())
 
-      f.isCompleted should be(false)
+      f.isCompleted should ===(false)
       controlPromise.success(())
 
       awaitCond(f.isCompleted)
@@ -94,10 +98,10 @@ class SwitchableLoggedBehaviorSpec extends AkkaSpec with DefaultTimeout {
 
     "log calls and parametrers" in {
       val logPromise = Promise[Int]()
-      val behavior = new SwitchableLoggedBehavior[Int, Int]((i) ⇒ Promise.successful(3).future, (i) ⇒ logPromise.success(i))
+      val behavior = new SwitchableLoggedBehavior[Int, Int]((i) ⇒ Future.successful(3), (i) ⇒ logPromise.success(i))
 
       behavior(11)
-      Await.result(logPromise.future, timeout.duration) should be(11)
+      Await.result(logPromise.future, timeout.duration) should ===(11)
     }
 
   }

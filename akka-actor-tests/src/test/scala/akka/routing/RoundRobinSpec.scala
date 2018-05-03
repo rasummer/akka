@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import language.postfixOps
@@ -14,7 +15,6 @@ import akka.pattern.ask
 import akka.actor.Terminated
 import akka.actor.ActorRef
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class RoundRobinSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
 
   def routeeSize(router: ActorRef): Int =
@@ -65,15 +65,15 @@ class RoundRobinSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
 
       for (_ ← 1 to iterationCount; _ ← 1 to connectionCount) {
         val id = Await.result((actor ? "hit").mapTo[Int], timeout.duration)
-        replies = replies + (id -> (replies(id) + 1))
+        replies = replies + (id → (replies(id) + 1))
       }
 
-      counter.get should be(connectionCount)
+      counter.get should ===(connectionCount)
 
       actor ! akka.routing.Broadcast("end")
       Await.ready(doneLatch, 5 seconds)
 
-      replies.values foreach { _ should be(iterationCount) }
+      replies.values foreach { _ should ===(iterationCount) }
     }
 
     "deliver a broadcast message using the !" in {
@@ -102,17 +102,17 @@ class RoundRobinSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
         def receive = Actor.emptyBehavior
       })), "round-robin-managed")
 
-      routeeSize(actor) should be(3)
+      routeeSize(actor) should ===(3)
       actor ! AdjustPoolSize(+4)
-      routeeSize(actor) should be(7)
+      routeeSize(actor) should ===(7)
       actor ! AdjustPoolSize(-2)
-      routeeSize(actor) should be(5)
+      routeeSize(actor) should ===(5)
 
       val other = ActorSelectionRoutee(system.actorSelection("/user/other"))
       actor ! AddRoutee(other)
-      routeeSize(actor) should be(6)
+      routeeSize(actor) should ===(6)
       actor ! RemoveRoutee(other)
-      routeeSize(actor) should be(5)
+      routeeSize(actor) should ===(5)
     }
   }
 
@@ -139,13 +139,13 @@ class RoundRobinSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
 
       for (_ ← 1 to iterationCount; _ ← 1 to connectionCount) {
         val id = Await.result((actor ? "hit").mapTo[String], timeout.duration)
-        replies = replies + (id -> (replies(id) + 1))
+        replies = replies + (id → (replies(id) + 1))
       }
 
       actor ! akka.routing.Broadcast("end")
       Await.ready(doneLatch, 5 seconds)
 
-      replies.values foreach { _ should be(iterationCount) }
+      replies.values foreach { _ should ===(iterationCount) }
     }
   }
 
@@ -185,14 +185,14 @@ class RoundRobinSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
 
       for (_ ← 1 to iterationCount; _ ← 1 to connectionCount) {
         val id = Await.result((actor ? "hit").mapTo[String], timeout.duration)
-        replies = replies + (id -> (replies(id) + 1))
+        replies = replies + (id → (replies(id) + 1))
       }
 
       watch(actor)
       actor ! akka.routing.Broadcast("end")
       expectTerminated(actor)
 
-      replies.values foreach { _ should be(iterationCount) }
+      replies.values foreach { _ should ===(iterationCount) }
     }
   }
 

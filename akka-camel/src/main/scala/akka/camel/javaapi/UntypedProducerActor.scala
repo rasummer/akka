@@ -1,19 +1,20 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.camel.javaapi
 
 import akka.actor.UntypedActor
 import akka.camel._
-import org.apache.camel.{ CamelContext, ProducerTemplate }
+import org.apache.camel.{ ProducerTemplate }
 import org.apache.camel.impl.DefaultCamelContext
 
 /**
  * Subclass this abstract class to create an untyped producer actor. This class is meant to be used from Java.
  *
- *
+ * @deprecated Akka Camel is deprecated since 2.5.0 in favour of 'Alpakka', the Akka Streams based collection of integrations to various endpoints (including Camel).
  */
+@Deprecated
 abstract class UntypedProducerActor extends UntypedActor with ProducerSupport {
   /**
    * Called before the message is sent to the endpoint specified by <code>getEndpointUri</code>. The original

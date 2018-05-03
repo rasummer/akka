@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.pattern
@@ -8,7 +8,6 @@ import language.postfixOps
 
 import akka.testkit.{ TestLatch, AkkaSpec }
 import akka.actor.{ Props, Actor }
-import java.util.concurrent.TimeoutException
 import scala.concurrent.{ Future, Promise, Await }
 import scala.concurrent.duration._
 
@@ -22,7 +21,6 @@ object PatternSpec {
   }
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class PatternSpec extends AkkaSpec("akka.actor.serialize-messages = off") {
   implicit val ec = system.dispatcher
   import PatternSpec._
@@ -32,7 +30,7 @@ class PatternSpec extends AkkaSpec("akka.actor.serialize-messages = off") {
     "provide Future for stopping an actor" in {
       val target = system.actorOf(Props[TargetActor])
       val result = gracefulStop(target, 5 seconds)
-      Await.result(result, 6 seconds) should be(true)
+      Await.result(result, 6 seconds) should ===(true)
     }
 
     "complete Future when actor already terminated" in {
@@ -53,18 +51,18 @@ class PatternSpec extends AkkaSpec("akka.actor.serialize-messages = off") {
   "pattern.after" must {
     "be completed successfully eventually" in {
       // TODO after is unfortunately shadowed by ScalaTest, fix as part of #3759
-      val f = akka.pattern.after(1 second, using = system.scheduler)(Promise.successful(5).future)
+      val f = akka.pattern.after(1 second, using = system.scheduler)(Future.successful(5))
 
       val r = Future.firstCompletedOf(Seq(Promise[Int]().future, f))
-      Await.result(r, remainingOrDefault) should be(5)
+      Await.result(r, remainingOrDefault) should ===(5)
     }
 
     "be completed abnormally eventually" in {
       // TODO after is unfortunately shadowed by ScalaTest, fix as part of #3759
-      val f = akka.pattern.after(1 second, using = system.scheduler)(Promise.failed(new IllegalStateException("Mexico")).future)
+      val f = akka.pattern.after(1 second, using = system.scheduler)(Future.failed(new IllegalStateException("Mexico")))
 
       val r = Future.firstCompletedOf(Seq(Promise[Int]().future, f))
-      intercept[IllegalStateException] { Await.result(r, remainingOrDefault) }.getMessage should be("Mexico")
+      intercept[IllegalStateException] { Await.result(r, remainingOrDefault) }.getMessage should ===("Mexico")
     }
   }
 }

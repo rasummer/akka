@@ -1,18 +1,18 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor;
 
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.time.Duration;
 import org.junit.ClassRule;
 import org.junit.Test;
 import akka.testkit.AkkaJUnitActorSystemResource;
 import akka.testkit.AkkaSpec;
-import scala.concurrent.duration.FiniteDuration;
+import org.scalatest.junit.JUnitSuite;
 
-public class InboxJavaAPITest {
+public class InboxJavaAPITest extends JUnitSuite {
 
   @ClassRule
   public static AkkaJUnitActorSystemResource actorSystemResource = new AkkaJUnitActorSystemResource("InboxJavaAPITest",
@@ -23,7 +23,7 @@ public class InboxJavaAPITest {
   @Test(expected = TimeoutException.class)
   public void mustBeAbleToThrowTimeoutException() throws TimeoutException {
     Inbox inbox = Inbox.create(system);
-    inbox.receive(new FiniteDuration(10, TimeUnit.MILLISECONDS));
+    inbox.receive(Duration.ofMillis(10));
   }
 
 }

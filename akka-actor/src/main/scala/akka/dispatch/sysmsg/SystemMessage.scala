@@ -1,10 +1,12 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.dispatch.sysmsg
 
 import scala.annotation.tailrec
 import akka.actor.{ ActorInitializationException, InternalActorRef, ActorRef, PossiblyHarmful }
+import akka.actor.DeadLetterSuppression
 
 /**
  * INTERNAL API
@@ -181,7 +183,7 @@ private[akka] class EarliestFirstSystemMessageList(val head: SystemMessage) exte
  *
  * INTERNAL API
  *
- * ➡➡➡ NEVER SEND THE SAME SYSTEM MESSAGE OBJECT TO TWO ACTORS ⬅⬅⬅
+ * <b>NEVER SEND THE SAME SYSTEM MESSAGE OBJECT TO TWO ACTORS</b>
  */
 private[akka] sealed trait SystemMessage extends PossiblyHarmful with Serializable {
   // Next fields are only modifiable via the SystemMessageList value class
@@ -227,7 +229,8 @@ private[akka] final case class Resume(causedByFailure: Throwable) extends System
  * INTERNAL API
  */
 @SerialVersionUID(1L)
-private[akka] final case class Terminate() extends SystemMessage // sent to self from ActorCell.stop
+private[akka] final case class Terminate() extends SystemMessage with DeadLetterSuppression // sent to self from ActorCell.stop
+
 /**
  * INTERNAL API
  */
@@ -237,11 +240,11 @@ private[akka] final case class Supervise(child: ActorRef, async: Boolean) extend
  * INTERNAL API
  */
 @SerialVersionUID(1L)
-private[akka] case class Watch(watchee: InternalActorRef, watcher: InternalActorRef) extends SystemMessage // sent to establish a DeathWatch
+private[akka] final case class Watch(watchee: InternalActorRef, watcher: InternalActorRef) extends SystemMessage // sent to establish a DeathWatch
 /**
  * INTERNAL API
  */
-@SerialVersionUID(1L)
+@SerialVersionUID(1L) // Watch and Unwatch have different signatures, but this can't be changed without breaking serialization compatibility
 private[akka] final case class Unwatch(watchee: ActorRef, watcher: ActorRef) extends SystemMessage // sent to tear down a DeathWatch
 /**
  * INTERNAL API
@@ -259,6 +262,6 @@ private[akka] final case class Failed(child: ActorRef, cause: Throwable, uid: In
 
 @SerialVersionUID(1L)
 private[akka] final case class DeathWatchNotification(
-  actor: ActorRef,
+  actor:              ActorRef,
   existenceConfirmed: Boolean,
-  addressTerminated: Boolean) extends SystemMessage
+  addressTerminated:  Boolean) extends SystemMessage with DeadLetterSuppression

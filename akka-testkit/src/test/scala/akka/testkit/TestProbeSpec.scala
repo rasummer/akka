@@ -1,18 +1,22 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.testkit
 
 import language.postfixOps
-
-import org.scalatest.WordSpec
-import org.scalatest.Matchers
-import org.scalatest.{ BeforeAndAfterEach, WordSpec }
 import akka.actor._
-import scala.concurrent.{ Future, Await }
+
+import scala.concurrent.Await
 import scala.concurrent.duration._
 import akka.pattern.ask
-import scala.util.Try
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
-class TestProbeSpec extends AkkaSpec with DefaultTimeout {
+import scala.util.Try
+import java.util.concurrent.atomic.AtomicInteger
+
+import org.scalatest.concurrent.Eventually
+
+class TestProbeSpec extends AkkaSpec with DefaultTimeout with Eventually {
 
   "A TestProbe" must {
 
@@ -22,7 +26,7 @@ class TestProbeSpec extends AkkaSpec with DefaultTimeout {
       tk.expectMsg(0 millis, "hello") // TestActor runs on CallingThreadDispatcher
       tk.lastMessage.sender ! "world"
       future should be('completed)
-      Await.result(future, timeout.duration) should be("world")
+      Await.result(future, timeout.duration) should ===("world")
     }
 
     "reply to messages" in {
@@ -41,6 +45,38 @@ class TestProbeSpec extends AkkaSpec with DefaultTimeout {
       probe2.expectMsg(0 millis, "hello")
       probe2.lastMessage.sender ! "world"
       probe1.expectMsg(0 millis, "some hint here", "world")
+    }
+
+    "create a child when invoking actorOf" in {
+      val probe = TestProbe()
+      val child = probe.childActorOf(TestActors.echoActorProps)
+      child.path.parent should be(probe.ref.path)
+
+      val namedChild = probe.childActorOf(TestActors.echoActorProps, "actorName")
+      namedChild.path.name should be("actorName")
+    }
+
+    "restart a failing child if the given supervisor says so" in {
+      val restarts = new AtomicInteger(0)
+
+      class FailingActor extends Actor {
+        override def receive = msg ⇒ msg match {
+          case _ ⇒
+            throw new RuntimeException("simulated failure")
+        }
+
+        override def postRestart(reason: Throwable): Unit = {
+          restarts.incrementAndGet()
+        }
+      }
+
+      val probe = TestProbe()
+      val child = probe.childActorOf(Props(new FailingActor), SupervisorStrategy.defaultStrategy)
+
+      awaitAssert {
+        child ! "hello"
+        restarts.get() should be > (1)
+      }
     }
 
     def assertFailureMessageContains(expectedHint: String)(block: ⇒ Unit) {
@@ -103,13 +139,44 @@ class TestProbeSpec extends AkkaSpec with DefaultTimeout {
 
     "be able to expect primitive types" in {
       for (_ ← 1 to 7) testActor ! 42
-      expectMsgType[Int] should be(42)
-      expectMsgAnyClassOf(classOf[Int]) should be(42)
-      expectMsgAllClassOf(classOf[Int]) should be(Seq(42))
-      expectMsgAllConformingOf(classOf[Int]) should be(Seq(42))
-      expectMsgAllConformingOf(5 seconds, classOf[Int]) should be(Seq(42))
-      expectMsgAllClassOf(classOf[Int]) should be(Seq(42))
-      expectMsgAllClassOf(5 seconds, classOf[Int]) should be(Seq(42))
+      expectMsgType[Int] should ===(42)
+      expectMsgAnyClassOf(classOf[Int]) should ===(42)
+      expectMsgAllClassOf(classOf[Int]) should ===(Seq(42))
+      expectMsgAllConformingOf(classOf[Int]) should ===(Seq(42))
+      expectMsgAllConformingOf(5 seconds, classOf[Int]) should ===(Seq(42))
+      expectMsgAllClassOf(classOf[Int]) should ===(Seq(42))
+      expectMsgAllClassOf(5 seconds, classOf[Int]) should ===(Seq(42))
+    }
+
+    "be able to fish for messages" in {
+      val probe = TestProbe()
+      probe.ref ! "hallo"
+      probe.ref ! "welt"
+      probe.ref ! "fishForMe"
+      probe.ref ! "done"
+
+      probe.fishForMessage() {
+        case "fishForMe" ⇒ true
+        case _           ⇒ false
+      }
+
+      probe.expectMsg(1 second, "done")
+    }
+
+    "be able to fish for specific messages" in {
+      val probe = TestProbe()
+      probe.ref ! "hallo"
+      probe.ref ! "welt"
+      probe.ref ! "fishForMe"
+      probe.ref ! "done"
+
+      val msg: String = probe.fishForSpecificMessage() {
+        case msg @ "fishForMe" ⇒ msg
+      }
+
+      msg should be("fishForMe")
+
+      probe.expectMsg(1 second, "done")
     }
 
     "be able to ignore primitive types" in {
@@ -132,6 +199,27 @@ class TestProbeSpec extends AkkaSpec with DefaultTimeout {
       probe.expectMsg(1.seconds, Terminated(target)(false, false))
     }
 
+    "allow user-defined name" in {
+      val probe = TestProbe("worker")
+      probe.ref.path.name should startWith("worker")
+    }
+
+    "have reasonable default name" in {
+      val probe = new TestProbe(system)
+      probe.ref.path.name should startWith("testProbe")
+    }
+
+    "expectNoMessage should pull the thingy" in {
+      val p = new TestProbe(system)
+
+      p.ref ! "nein" // no
+      p.ref ! "nie" // no
+
+      eventually(p.expectNoMessage(100.millis))
+
+      p.ref ! "tak" // yes
+      p.expectMsg("tak")
+    }
   }
 
 }

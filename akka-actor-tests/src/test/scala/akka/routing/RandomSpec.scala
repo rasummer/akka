@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import language.postfixOps
@@ -11,7 +12,6 @@ import akka.actor.{ Props, Actor }
 import akka.testkit.{ TestLatch, ImplicitSender, DefaultTimeout, AkkaSpec }
 import akka.pattern.ask
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class RandomSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
 
   "random pool" must {
@@ -51,7 +51,7 @@ class RandomSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
       val counter = new AtomicInteger
       var replies = Map.empty[Int, Int]
       for (i ← 0 until connectionCount) {
-        replies = replies + (i -> 0)
+        replies = replies + (i → 0)
       }
 
       val actor = system.actorOf(RandomPool(connectionCount).props(routeeProps =
@@ -66,17 +66,17 @@ class RandomSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
       for (i ← 0 until iterationCount) {
         for (k ← 0 until connectionCount) {
           val id = Await.result((actor ? "hit").mapTo[Int], timeout.duration)
-          replies = replies + (id -> (replies(id) + 1))
+          replies = replies + (id → (replies(id) + 1))
         }
       }
 
-      counter.get should be(connectionCount)
+      counter.get should ===(connectionCount)
 
       actor ! akka.routing.Broadcast("end")
       Await.ready(doneLatch, 5 seconds)
 
       replies.values foreach { _ should be > (0) }
-      replies.values.sum should be(iterationCount * connectionCount)
+      replies.values.sum should ===(iterationCount * connectionCount)
     }
 
     "deliver a broadcast message using the !" in {

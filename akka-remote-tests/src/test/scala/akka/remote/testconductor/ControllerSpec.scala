@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.testconductor
 
 import akka.testkit.AkkaSpec
@@ -13,7 +14,7 @@ import java.net.InetAddress
 object ControllerSpec {
   val config = """
     akka.testconductor.barrier-timeout = 5s
-    akka.actor.provider = akka.remote.RemoteActorRefProvider
+    akka.actor.provider = remote
     akka.actor.debug.fsm = on
     akka.actor.debug.lifecycle = on
     """
@@ -33,7 +34,7 @@ class ControllerSpec extends AkkaSpec(ControllerSpec.config) with ImplicitSender
       c ! NodeInfo(B, AddressFromURIString("akka://sys"), testActor)
       expectMsg(ToClient(Done))
       c ! Controller.GetNodes
-      expectMsgType[Iterable[RoleName]].toSet should be(Set(A, B))
+      expectMsgType[Iterable[RoleName]].toSet should ===(Set(A, B))
       c ! PoisonPill // clean up so network connections don't accumulate during test run
     }
 

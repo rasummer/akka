@@ -1,17 +1,15 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.event.slf4j
 
-import org.slf4j.{ Logger ⇒ SLFLogger, LoggerFactory ⇒ SLFLoggerFactory }
-import org.slf4j.MDC
+import org.slf4j.{ MDC, Marker, MarkerFactory, Logger ⇒ SLFLogger, LoggerFactory ⇒ SLFLoggerFactory }
 import akka.event.Logging._
 import akka.actor._
-import akka.event.DummyClassForStringSources
+import akka.event.{ LogMarker, _ }
 import akka.util.Helpers
-import akka.event.LoggingFilter
-import akka.event.EventStream
+import akka.dispatch.RequiresMessageQueue
 
 /**
  * Base trait for all classes that wants to be able use the SLF4J logging infrastructure.
@@ -53,9 +51,10 @@ object Logger {
  * The thread in which the logging was performed is captured in
  * Mapped Diagnostic Context (MDC) with attribute name "sourceThread".
  */
-class Slf4jLogger extends Actor with SLF4JLogging {
+class Slf4jLogger extends Actor with SLF4JLogging with RequiresMessageQueue[LoggerMessageQueueSemantics] {
 
   val mdcThreadAttributeName = "sourceThread"
+  val mdcActorSystemAttributeName = "sourceActorSystem"
   val mdcAkkaSourceAttributeName = "akkaSource"
   val mdcAkkaTimestamp = "akkaTimestamp"
 
@@ -64,19 +63,30 @@ class Slf4jLogger extends Actor with SLF4JLogging {
     case event @ Error(cause, logSource, logClass, message) ⇒
       withMdc(logSource, event) {
         cause match {
-          case Error.NoCause | null ⇒ Logger(logClass, logSource).error(if (message != null) message.toString else null)
-          case _                    ⇒ Logger(logClass, logSource).error(if (message != null) message.toString else cause.getLocalizedMessage, cause)
+          case Error.NoCause | null ⇒
+            Logger(logClass, logSource).error(markerIfPresent(event), if (message != null) message.toString else null)
+          case _ ⇒
+            Logger(logClass, logSource).error(markerIfPresent(event), if (message != null) message.toString else cause.getLocalizedMessage, cause)
         }
       }
 
     case event @ Warning(logSource, logClass, message) ⇒
-      withMdc(logSource, event) { Logger(logClass, logSource).warn("{}", message.asInstanceOf[AnyRef]) }
+      withMdc(logSource, event) {
+        event match {
+          case e: LogEventWithCause ⇒ Logger(logClass, logSource).warn(markerIfPresent(event), if (message != null) message.toString else null, e.cause)
+          case _                    ⇒ Logger(logClass, logSource).warn(markerIfPresent(event), if (message != null) message.toString else null)
+        }
+      }
 
     case event @ Info(logSource, logClass, message) ⇒
-      withMdc(logSource, event) { Logger(logClass, logSource).info("{}", message.asInstanceOf[AnyRef]) }
+      withMdc(logSource, event) {
+        Logger(logClass, logSource).info(markerIfPresent(event), "{}", message.asInstanceOf[AnyRef])
+      }
 
     case event @ Debug(logSource, logClass, message) ⇒
-      withMdc(logSource, event) { Logger(logClass, logSource).debug("{}", message.asInstanceOf[AnyRef]) }
+      withMdc(logSource, event) {
+        Logger(logClass, logSource).debug(markerIfPresent(event), "{}", message.asInstanceOf[AnyRef])
+      }
 
     case InitializeLogger(_) ⇒
       log.info("Slf4jLogger started")
@@ -88,14 +98,26 @@ class Slf4jLogger extends Actor with SLF4JLogging {
     MDC.put(mdcAkkaSourceAttributeName, logSource)
     MDC.put(mdcThreadAttributeName, logEvent.thread.getName)
     MDC.put(mdcAkkaTimestamp, formatTimestamp(logEvent.timestamp))
+    MDC.put(mdcActorSystemAttributeName, actorSystemName)
     logEvent.mdc foreach { case (k, v) ⇒ MDC.put(k, String.valueOf(v)) }
     try logStatement finally {
       MDC.remove(mdcAkkaSourceAttributeName)
       MDC.remove(mdcThreadAttributeName)
       MDC.remove(mdcAkkaTimestamp)
+      MDC.remove(mdcActorSystemAttributeName)
       logEvent.mdc.keys.foreach(k ⇒ MDC.remove(k))
     }
   }
+
+  private final def markerIfPresent(event: LogEvent): Marker =
+    event match {
+      case m: LogEventWithMarker ⇒
+        m.marker match {
+          case slf4jMarker: Slf4jLogMarker ⇒ slf4jMarker.marker
+          case marker                      ⇒ MarkerFactory.getMarker(marker.name)
+        }
+      case _ ⇒ null
+    }
 
   /**
    * Override this method to provide a differently formatted timestamp
@@ -104,10 +126,12 @@ class Slf4jLogger extends Actor with SLF4JLogging {
    */
   protected def formatTimestamp(timestamp: Long): String =
     Helpers.currentTimeMillisToUTCString(timestamp)
+
+  private val actorSystemName = context.system.name
 }
 
 /**
- * [[akka.event.LoggingFilter]] that uses the log level defined in in the SLF4J
+ * [[akka.event.LoggingFilter]] that uses the log level defined in the SLF4J
  * backend configuration (e.g. logback.xml) to filter log events before publishing
  * the log events to the `eventStream`.
  */
@@ -120,4 +144,15 @@ class Slf4jLoggingFilter(settings: ActorSystem.Settings, eventStream: EventStrea
     (eventStream.logLevel >= InfoLevel) && Logger(logClass, logSource).isInfoEnabled
   def isDebugEnabled(logClass: Class[_], logSource: String) =
     (eventStream.logLevel >= DebugLevel) && Logger(logClass, logSource).isDebugEnabled
+}
+
+/** Wraps [[org.slf4j.Marker]] */
+final class Slf4jLogMarker(val marker: org.slf4j.Marker) extends LogMarker(name = marker.getName)
+
+/** Factory for creating [[LogMarker]] that wraps [[org.slf4j.Marker]] */
+object Slf4jLogMarker {
+  def apply(marker: org.slf4j.Marker): Slf4jLogMarker = new Slf4jLogMarker(marker)
+
+  /** Java API */
+  def create(marker: org.slf4j.Marker): Slf4jLogMarker = apply(marker)
 }

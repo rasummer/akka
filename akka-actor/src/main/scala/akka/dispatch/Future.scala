@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.dispatch
@@ -9,8 +9,11 @@ import akka.japi.{ Function ⇒ JFunc, Option ⇒ JOption, Procedure }
 import scala.concurrent.{ Future, Promise, ExecutionContext, ExecutionContextExecutor, ExecutionContextExecutorService }
 import java.lang.{ Iterable ⇒ JIterable }
 import java.util.{ LinkedList ⇒ JLinkedList }
-import java.util.concurrent.{ Executor, ExecutorService, ExecutionException, Callable, TimeoutException }
+import java.util.concurrent.{ Executor, ExecutorService, Callable }
 import scala.util.{ Try, Success, Failure }
+import java.util.concurrent.CompletionStage
+import java.util.concurrent.CompletableFuture
+import akka.compat
 
 /**
  * ExecutionContexts is the Java API for ExecutionContexts
@@ -41,7 +44,7 @@ object ExecutionContexts {
    * Returns a new ExecutionContextExecutorService which will delegate execution to the underlying ExecutorService,
    * and which will use the default error reporter.
    *
-   * @param executor the ExecutorService which will be used for the ExecutionContext
+   * @param executorService the ExecutorService which will be used for the ExecutionContext
    * @return a new ExecutionContext
    */
   def fromExecutorService(executorService: ExecutorService): ExecutionContextExecutorService =
@@ -51,7 +54,7 @@ object ExecutionContexts {
    * Returns a new ExecutionContextExecutorService which will delegate execution to the underlying ExecutorService,
    * and which will use the provided error reporter.
    *
-   * @param executor the ExecutorService which will be used for the ExecutionContext
+   * @param executorService the ExecutorService which will be used for the ExecutionContext
    * @param errorReporter a Procedure that will log any exceptions passed to it
    * @return a new ExecutionContext
    */
@@ -88,7 +91,7 @@ object Futures {
    *
    * The result becomes available once the asynchronous computation is completed.
    *
-   * @param body     the asychronous computation
+   * @param body     the asynchronous computation
    * @param executor the execution context on which the future is run
    * @return         the `Future` holding the result of the computation
    */
@@ -112,11 +115,20 @@ object Futures {
   def successful[T](result: T): Future[T] = Future.successful(result)
 
   /**
+   * Creates an already completed CompletionStage with the specified exception
+   */
+  def failedCompletionStage[T](ex: Throwable): CompletionStage[T] = {
+    val f = CompletableFuture.completedFuture[T](null.asInstanceOf[T])
+    f.obtrudeException(ex)
+    f
+  }
+
+  /**
    * Returns a Future that will hold the optional result of the first Future with a result that matches the predicate
    */
   def find[T <: AnyRef](futures: JIterable[Future[T]], predicate: JFunc[T, java.lang.Boolean], executor: ExecutionContext): Future[JOption[T]] = {
     implicit val ec = executor
-    Future.find[T](futures.asScala)(predicate.apply(_))(executor) map JOption.fromScalaOption
+    compat.Future.find[T](futures.asScala)(predicate.apply(_))(executor) map JOption.fromScalaOption
   }
 
   /**
@@ -132,13 +144,13 @@ object Futures {
    * or the result of the fold.
    */
   def fold[T <: AnyRef, R <: AnyRef](zero: R, futures: JIterable[Future[T]], fun: akka.japi.Function2[R, T, R], executor: ExecutionContext): Future[R] =
-    Future.fold(futures.asScala)(zero)(fun.apply)(executor)
+    compat.Future.fold(futures.asScala)(zero)(fun.apply)(executor)
 
   /**
    * Reduces the results of the supplied futures and binary function.
    */
   def reduce[T <: AnyRef, R >: T](futures: JIterable[Future[T]], fun: akka.japi.Function2[R, T, R], executor: ExecutionContext): Future[R] =
-    Future.reduce[T, R](futures.asScala)(fun.apply)(executor)
+    compat.Future.reduce[T, R](futures.asScala)(fun.apply)(executor)
 
   /**
    * Simple version of [[#traverse]]. Transforms a JIterable[Future[A]] into a Future[JIterable[A]].
@@ -272,7 +284,7 @@ abstract class Recover[+T] extends japi.RecoverBridge[T] {
    * becomes completed with a failure.
    *
    * @return a successful value for the passed in failure
-   * @throws the passed in failure to propagate it.
+   * Throws the passed in failure to propagate it.
    *
    * Java API
    */
@@ -350,7 +362,7 @@ abstract class Mapper[-T, +R] extends scala.runtime.AbstractFunction1[T, R] {
   /**
    * Override this method if you need to throw checked exceptions
    *
-   * @throws UnsupportedOperation by default
+   * Throws UnsupportedOperation by default.
    */
   @throws(classOf[Throwable])
   def checkedApply(parameter: T): R = throw new UnsupportedOperationException("Mapper.checkedApply has not been implemented")

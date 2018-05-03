@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.testkit._
@@ -8,14 +9,13 @@ import akka.actor._
 import com.typesafe.config.ConfigFactory
 import akka.actor.RootActorPath
 import scala.concurrent.duration._
-import akka.TestUtils
+import akka.testkit.SocketUtil
 import akka.event.Logging.Warning
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class RemoteDeathWatchSpec extends AkkaSpec(ConfigFactory.parseString("""
 akka {
     actor {
-        provider = "akka.remote.RemoteActorRefProvider"
+        provider = remote
         deployment {
             /watchers.remote = "akka.tcp://other@localhost:2666"
         }
@@ -28,6 +28,10 @@ akka {
     }
 }
 """)) with ImplicitSender with DefaultTimeout with DeathWatchSpec {
+
+  val protocol =
+    if (RARP(system).provider.remoteSettings.Artery.Enabled) "akka"
+    else "akka.tcp"
 
   val other = ActorSystem("other", ConfigFactory.parseString("akka.remote.netty.tcp.port=2666")
     .withFallback(system.settings.config))
@@ -48,9 +52,9 @@ akka {
     system.eventStream.subscribe(probe.ref, classOf[QuarantinedEvent])
     val rarp = RARP(system).provider
     // pick an unused port
-    val port = TestUtils.temporaryServerAddress().getPort
+    val port = SocketUtil.temporaryLocalPort()
     // simulate de-serialized ActorRef
-    val ref = rarp.resolveActorRef(s"akka.tcp://OtherSystem@localhost:$port/user/foo/bar#1752527294")
+    val ref = rarp.resolveActorRef(s"$protocol://OtherSystem@localhost:$port/user/foo/bar#1752527294")
     system.actorOf(Props(new Actor {
       context.watch(ref)
       def receive = {
@@ -59,7 +63,7 @@ akka {
     }).withDeploy(Deploy.local))
 
     expectMsg(20.seconds, ref)
-    // we don't expect real quarantine when the UID is unknown, i.e. QuarantinedEvent is not published 
+    // we don't expect real quarantine when the UID is unknown, i.e. QuarantinedEvent is not published
     probe.expectNoMsg(3.seconds)
     // The following verifies ticket #3870, i.e. make sure that re-delivery of Watch message is stopped.
     // It was observed as periodic logging of "address is now gated" when the gate was lifted.
@@ -68,7 +72,7 @@ akka {
   }
 
   "receive Terminated when watched node is unknown host" in {
-    val path = RootActorPath(Address("akka.tcp", system.name, "unknownhost", 2552)) / "user" / "subject"
+    val path = RootActorPath(Address(protocol, system.name, "unknownhost", 2552)) / "user" / "subject"
     system.actorOf(Props(new Actor {
       context.watch(context.actorFor(path))
       def receive = {
@@ -80,7 +84,7 @@ akka {
   }
 
   "receive ActorIdentity(None) when identified node is unknown host" in {
-    val path = RootActorPath(Address("akka.tcp", system.name, "unknownhost2", 2552)) / "user" / "subject"
+    val path = RootActorPath(Address(protocol, system.name, "unknownhost2", 2552)) / "user" / "subject"
     system.actorSelection(path) ! Identify(path)
     expectMsg(60.seconds, ActorIdentity(path, None))
   }
@@ -88,7 +92,7 @@ akka {
   "quarantine systems after unsuccessful system message delivery if have not communicated before" in {
     // Synthesize an ActorRef to a remote system this one has never talked to before.
     // This forces ReliableDeliverySupervisor to start with unknown remote system UID.
-    val extinctPath = RootActorPath(Address("akka.tcp", "extinct-system", "localhost", TestUtils.temporaryServerAddress().getPort)) / "user" / "noone"
+    val extinctPath = RootActorPath(Address(protocol, "extinct-system", "localhost", SocketUtil.temporaryLocalPort())) / "user" / "noone"
     val transport = RARP(system).provider.transport
     val extinctRef = new RemoteActorRef(transport, transport.localAddressForRemote(extinctPath.address),
       extinctPath, Nobody, props = None, deploy = None)

@@ -1,74 +1,128 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.persistence
 
-import akka.actor.{ Props, ActorRef }
-import akka.testkit.{ TestEvent, EventFilter, ImplicitSender, AkkaSpec }
-import scala.concurrent.duration._
-import akka.persistence.snapshot.local.LocalSnapshotStore
-import akka.persistence.serialization.Snapshot
-import akka.event.Logging
+import java.io.IOException
 
+import akka.actor.{ ActorRef, Props }
+import akka.event.Logging
+import akka.persistence.snapshot.local.LocalSnapshotStore
+import akka.testkit.{ EventFilter, ImplicitSender, TestEvent }
+import com.typesafe.config.Config
+
+import scala.concurrent.Future
+import scala.concurrent.duration._
 import scala.language.postfixOps
 
 object SnapshotFailureRobustnessSpec {
 
-  class SaveSnapshotTestProcessor(name: String, probe: ActorRef) extends NamedProcessor(name) {
-    def receive = {
-      case Persistent(payload, snr) ⇒ saveSnapshot(payload)
-      case SaveSnapshotSuccess(md)  ⇒ probe ! md.sequenceNr
-      case SnapshotOffer(md, s)     ⇒ probe ! ((md, s))
-      case other                    ⇒ probe ! other
+  case class Cmd(payload: String)
+  case class DeleteSnapshot(seqNr: Int)
+  case class DeleteSnapshots(criteria: SnapshotSelectionCriteria)
+
+  class SaveSnapshotTestPersistentActor(name: String, probe: ActorRef) extends NamedPersistentActor(name) {
+    override def receiveRecover: Receive = {
+      case SnapshotOffer(md, s) ⇒ probe ! ((md, s))
+      case other                ⇒ probe ! other
+    }
+
+    override def receiveCommand = {
+      case Cmd(payload)            ⇒ persist(payload)(_ ⇒ saveSnapshot(payload))
+      case SaveSnapshotSuccess(md) ⇒ probe ! md.sequenceNr
+      case other                   ⇒ probe ! other
     }
   }
 
-  class LoadSnapshotTestProcessor(name: String, probe: ActorRef) extends NamedProcessor(name) {
-    def receive = {
-      case Persistent(payload, snr) ⇒ probe ! s"${payload}-${snr}"
-      case SnapshotOffer(md, s)     ⇒ probe ! ((md, s))
-      case other                    ⇒ probe ! other
+  class DeleteSnapshotTestPersistentActor(name: String, probe: ActorRef) extends NamedPersistentActor(name) {
+
+    // TODO do we call it "snapshot store" or "snapshot plugin", small inconsistency here
+    override def snapshotPluginId: String =
+      "akka.persistence.snapshot-store.local-delete-fail"
+
+    override def receiveRecover: Receive = {
+      case SnapshotOffer(md, s) ⇒ probe ! ((md, s))
+      case other                ⇒ probe ! other
     }
-    override def preStart() = ()
+
+    override def receiveCommand = {
+      case Cmd(payload)            ⇒ persist(payload)(_ ⇒ saveSnapshot(payload))
+      case DeleteSnapshot(seqNr)   ⇒ deleteSnapshot(seqNr)
+      case DeleteSnapshots(crit)   ⇒ deleteSnapshots(crit)
+      case SaveSnapshotSuccess(md) ⇒ probe ! md.sequenceNr
+      case other                   ⇒ probe ! other
+    }
   }
 
-  class FailingLocalSnapshotStore extends LocalSnapshotStore {
+  class LoadSnapshotTestPersistentActor(name: String, probe: ActorRef) extends NamedPersistentActor(name) {
+    override def receiveRecover: Receive = {
+      case SnapshotOffer(md, s) ⇒ probe ! ((md, s))
+      case payload: String      ⇒ probe ! s"${payload}-${lastSequenceNr}"
+      case other                ⇒ probe ! other
+    }
+
+    override def receiveCommand = {
+      case Cmd(payload) ⇒
+        persist(payload) { _ ⇒
+          probe ! s"${payload}-${lastSequenceNr}"
+        }
+      case SnapshotOffer(md, s) ⇒ probe ! ((md, s))
+      case other                ⇒ probe ! other
+    }
+  }
+
+  class FailingLocalSnapshotStore(config: Config) extends LocalSnapshotStore(config) {
     override def save(metadata: SnapshotMetadata, snapshot: Any): Unit = {
-      if (metadata.sequenceNr == 2) {
-        val bytes = "b0rk".getBytes("UTF-8")
-        withOutputStream(metadata)(_.write(bytes))
+      if (metadata.sequenceNr == 2 || snapshot == "boom") {
+        val bytes = "b0rkb0rk".getBytes("UTF-8") // length >= 8 to prevent EOF exception
+        val tmpFile = withOutputStream(metadata)(_.write(bytes))
+        tmpFile.renameTo(snapshotFileForWrite(metadata))
       } else super.save(metadata, snapshot)
+    }
+  }
+
+  class DeleteFailingLocalSnapshotStore(config: Config) extends LocalSnapshotStore(config) {
+    override def deleteAsync(metadata: SnapshotMetadata): Future[Unit] = {
+      super.deleteAsync(metadata) // we actually delete it properly, but act as if it failed
+      Future.failed(new IOException("Failed to delete snapshot for some reason!"))
+    }
+
+    override def deleteAsync(persistenceId: String, criteria: SnapshotSelectionCriteria): Future[Unit] = {
+      super.deleteAsync(persistenceId, criteria) // we actually delete it properly, but act as if it failed
+      Future.failed(new IOException("Failed to delete snapshot for some reason!"))
     }
   }
 }
 
-class SnapshotFailureRobustnessSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "SnapshotFailureRobustnessSpec", serialization = "off", extraConfig = Some(
-  """
-    |akka.persistence.snapshot-store.local.class = "akka.persistence.SnapshotFailureRobustnessSpec$FailingLocalSnapshotStore"
-  """.stripMargin))) with PersistenceSpec with ImplicitSender {
+class SnapshotFailureRobustnessSpec extends PersistenceSpec(PersistenceSpec.config("leveldb", "SnapshotFailureRobustnessSpec", serialization = "off", extraConfig = Some(
+  s"""
+  akka.persistence.snapshot-store.local.class = "akka.persistence.SnapshotFailureRobustnessSpec$$FailingLocalSnapshotStore"
+  akka.persistence.snapshot-store.local-delete-fail = $${akka.persistence.snapshot-store.local}
+  akka.persistence.snapshot-store.local-delete-fail.class = "akka.persistence.SnapshotFailureRobustnessSpec$$DeleteFailingLocalSnapshotStore"
+  """))) with ImplicitSender {
 
   import SnapshotFailureRobustnessSpec._
 
-  "A processor with a failing snapshot" must {
+  "A persistentActor with a failing snapshot" must {
     "recover state starting from the most recent complete snapshot" in {
-      val sProcessor = system.actorOf(Props(classOf[SaveSnapshotTestProcessor], name, testActor))
+      val sPersistentActor = system.actorOf(Props(classOf[SaveSnapshotTestPersistentActor], name, testActor))
       val persistenceId = name
 
       expectMsg(RecoveryCompleted)
-      sProcessor ! Persistent("blahonga")
+      sPersistentActor ! Cmd("blahonga")
       expectMsg(1)
-      sProcessor ! Persistent("kablama")
+      sPersistentActor ! Cmd("kablama")
       expectMsg(2)
       system.eventStream.publish(TestEvent.Mute(
-        EventFilter.error(start = "Error loading snapshot [")))
+        EventFilter[java.io.NotSerializableException](start = "Error loading snapshot")))
       system.eventStream.subscribe(testActor, classOf[Logging.Error])
       try {
-        val lProcessor = system.actorOf(Props(classOf[LoadSnapshotTestProcessor], name, testActor))
-        lProcessor ! Recover()
+        val lPersistentActor = system.actorOf(Props(classOf[LoadSnapshotTestPersistentActor], name, testActor))
+        expectMsgType[Logging.Error].message.toString should startWith("Error loading snapshot")
         expectMsgPF() {
           case (SnapshotMetadata(`persistenceId`, 1, timestamp), state) ⇒
-            state should be("blahonga")
+            state should ===("blahonga")
             timestamp should be > (0L)
         }
         expectMsg("kablama-2")
@@ -78,6 +132,72 @@ class SnapshotFailureRobustnessSpec extends AkkaSpec(PersistenceSpec.config("lev
         system.eventStream.unsubscribe(testActor, classOf[Logging.Error])
         system.eventStream.publish(TestEvent.UnMute(
           EventFilter.error(start = "Error loading snapshot [")))
+      }
+    }
+
+    "fail recovery and stop actor when no snapshot could be loaded" in {
+      val sPersistentActor = system.actorOf(Props(classOf[SaveSnapshotTestPersistentActor], name, testActor))
+      val persistenceId = name
+
+      expectMsg(RecoveryCompleted)
+      sPersistentActor ! Cmd("ok")
+      expectMsg(1)
+      // max-attempts = 3
+      sPersistentActor ! Cmd("boom")
+      expectMsg(2)
+      sPersistentActor ! Cmd("boom")
+      expectMsg(3)
+      sPersistentActor ! Cmd("boom")
+      expectMsg(4)
+      system.eventStream.publish(TestEvent.Mute(
+        EventFilter[java.io.NotSerializableException](start = "Error loading snapshot")))
+      system.eventStream.publish(TestEvent.Mute(
+        EventFilter[java.io.NotSerializableException](start = "Persistence failure")))
+      system.eventStream.subscribe(testActor, classOf[Logging.Error])
+      try {
+        val lPersistentActor = system.actorOf(Props(classOf[LoadSnapshotTestPersistentActor], name, testActor))
+        (1 to 3).foreach { _ ⇒
+          expectMsgType[Logging.Error].message.toString should startWith("Error loading snapshot")
+        }
+        expectMsgType[Logging.Error].message.toString should startWith("Persistence failure")
+        watch(lPersistentActor)
+        expectTerminated(lPersistentActor)
+      } finally {
+        system.eventStream.unsubscribe(testActor, classOf[Logging.Error])
+        system.eventStream.publish(TestEvent.UnMute(
+          EventFilter.error(start = "Error loading snapshot [")))
+      }
+    }
+
+    "receive failure message when deleting a single snapshot fails" in {
+      val p = system.actorOf(Props(classOf[DeleteSnapshotTestPersistentActor], name, testActor))
+      val persistenceId = name
+
+      expectMsg(RecoveryCompleted)
+      p ! Cmd("hello")
+      expectMsg(1)
+      p ! DeleteSnapshot(1)
+      expectMsgPF() {
+        case DeleteSnapshotFailure(SnapshotMetadata(`persistenceId`, 1, timestamp), cause) ⇒
+          // ok, expected failure
+          cause.getMessage should include("Failed to delete")
+      }
+    }
+    "receive failure message when bulk deleting snapshot fails" in {
+      val p = system.actorOf(Props(classOf[DeleteSnapshotTestPersistentActor], name, testActor))
+      val persistenceId = name
+
+      expectMsg(RecoveryCompleted)
+      p ! Cmd("hello")
+      expectMsg(1)
+      p ! Cmd("hola")
+      expectMsg(2)
+      val criteria = SnapshotSelectionCriteria(maxSequenceNr = 10)
+      p ! DeleteSnapshots(criteria)
+      expectMsgPF() {
+        case DeleteSnapshotsFailure(criteria, cause) ⇒
+          // ok, expected failure
+          cause.getMessage should include("Failed to delete")
       }
     }
   }

@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import com.typesafe.config.ConfigFactory
@@ -52,7 +53,7 @@ abstract class ClientDowningNodeThatIsUpSpec(multiNodeConfig: ClientDowningNodeT
         markNodeAsUnavailable(thirdAddress)
 
         awaitMembersUp(numberOfMembers = 3, canNotBePartOfMemberRing = Set(thirdAddress))
-        clusterView.members.exists(_.address == thirdAddress) should be(false)
+        clusterView.members.exists(_.address == thirdAddress) should ===(false)
       }
 
       runOn(third) {

@@ -1,13 +1,15 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.actor.routing
 
 import akka.testkit._
 import akka.actor._
-import akka.actor.Actor._
 import akka.routing._
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.Await
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class ListenerSpec extends AkkaSpec {
 
   "Listener" must {
@@ -47,7 +49,7 @@ class ListenerSpec extends AkkaSpec {
       broadcast ! "foo"
 
       Await.ready(barLatch, TestLatch.DefaultTimeout)
-      barCount.get should be(2)
+      barCount.get should ===(2)
 
       Await.ready(fooLatch, TestLatch.DefaultTimeout)
 

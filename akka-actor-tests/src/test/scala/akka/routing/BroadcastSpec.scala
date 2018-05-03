@@ -1,11 +1,11 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import java.util.concurrent.atomic.AtomicInteger
 import scala.concurrent.Await
-import scala.concurrent.duration._
 import akka.actor.{ Props, Actor }
 import akka.testkit.{ TestLatch, ImplicitSender, DefaultTimeout, AkkaSpec }
 import akka.pattern.ask
@@ -16,9 +16,7 @@ object BroadcastSpec {
   }
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class BroadcastSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
-  import BroadcastSpec._
 
   "broadcast group" must {
 
@@ -48,8 +46,8 @@ class BroadcastSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
 
       Await.ready(doneLatch, remainingOrDefault)
 
-      counter1.get should be(1)
-      counter2.get should be(1)
+      counter1.get should ===(1)
+      counter2.get should ===(1)
     }
 
     "broadcast message using ?" in {
@@ -80,8 +78,8 @@ class BroadcastSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
 
       Await.ready(doneLatch, remainingOrDefault)
 
-      counter1.get should be(1)
-      counter2.get should be(1)
+      counter1.get should ===(1)
+      counter2.get should ===(1)
     }
   }
 

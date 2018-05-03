@@ -1,42 +1,18 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
-import com.typesafe.config.Config
 import akka.ConfigurationException
-import akka.actor.ActorSystem
-import akka.actor.ActorSystemImpl
-import akka.actor.Deploy
-import akka.actor.DynamicAccess
-import akka.actor.InternalActorRef
-import akka.actor.NoScopeGiven
-import akka.actor.Scheduler
-import akka.actor.Scope
-import akka.actor.Terminated
-import akka.dispatch.sysmsg.DeathWatchNotification
+import akka.actor.{ ActorRef, ActorSystem, ActorSystemImpl, Deploy, DynamicAccess, NoScopeGiven, Scope }
+import akka.cluster.routing.{ ClusterRouterGroup, ClusterRouterGroupSettings, ClusterRouterPool, ClusterRouterPoolSettings }
 import akka.event.EventStream
-import akka.japi.Util.immutableSeq
-import akka.remote.RemoteActorRefProvider
-import akka.remote.RemoteDeployer
+import akka.remote.{ RemoteActorRefProvider, RemoteDeployer }
 import akka.remote.routing.RemoteRouterConfig
-import akka.routing.RouterConfig
-import akka.routing.DefaultResizer
-import akka.cluster.routing.MixMetricsSelector
-import akka.cluster.routing.HeapMetricsSelector
-import akka.cluster.routing.SystemLoadAverageMetricsSelector
-import akka.cluster.routing.CpuMetricsSelector
-import akka.cluster.routing.MetricsSelector
-import akka.dispatch.sysmsg.SystemMessage
-import akka.actor.ActorRef
-import akka.actor.Props
-import akka.routing.Pool
-import akka.routing.Group
-import akka.cluster.routing.ClusterRouterPool
-import akka.cluster.routing.ClusterRouterGroup
+import akka.routing.{ Group, Pool }
+import com.typesafe.config.Config
 import com.typesafe.config.ConfigFactory
-import akka.cluster.routing.ClusterRouterPoolSettings
-import akka.cluster.routing.ClusterRouterGroupSettings
 
 /**
  * INTERNAL API
@@ -46,9 +22,9 @@ import akka.cluster.routing.ClusterRouterGroupSettings
  * the `ClusterActorRefProvider` is used.
  */
 private[akka] class ClusterActorRefProvider(
-  _systemName: String,
-  _settings: ActorSystem.Settings,
-  _eventStream: EventStream,
+  _systemName:    String,
+  _settings:      ActorSystem.Settings,
+  _eventStream:   EventStream,
   _dynamicAccess: DynamicAccess) extends RemoteActorRefProvider(
   _systemName, _settings, _eventStream, _dynamicAccess) {
 
@@ -86,9 +62,19 @@ private[akka] class ClusterActorRefProvider(
  * Deployer of cluster aware routers.
  */
 private[akka] class ClusterDeployer(_settings: ActorSystem.Settings, _pm: DynamicAccess) extends RemoteDeployer(_settings, _pm) {
-  override def parseConfig(path: String, config: Config): Option[Deploy] = {
 
-    super.parseConfig(path, config) match {
+  override def parseConfig(path: String, config: Config): Option[Deploy] = {
+    // config is the user supplied section, no defaults
+    // amend it to use max-total-nr-of-instances as nr-of-instances if cluster.enabled and
+    // user has not specified nr-of-instances
+    val config2 =
+      if (config.hasPath("cluster.enabled") && config.getBoolean("cluster.enabled") && !config.hasPath("nr-of-instances")) {
+        val maxTotalNrOfInstances = config.withFallback(default).getInt("cluster.max-total-nr-of-instances")
+        ConfigFactory.parseString("nr-of-instances=" + maxTotalNrOfInstances)
+          .withFallback(config)
+      } else config
+
+    super.parseConfig(path, config2) match {
       case d @ Some(deploy) ⇒
         if (deploy.config.getBoolean("cluster.enabled")) {
           if (deploy.scope != NoScopeGiven)

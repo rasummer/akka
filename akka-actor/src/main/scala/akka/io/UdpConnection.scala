@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.io
 
 import java.net.InetSocketAddress
@@ -18,10 +19,11 @@ import akka.io.UdpConnected._
 /**
  * INTERNAL API
  */
-private[io] class UdpConnection(udpConn: UdpConnectedExt,
-                                channelRegistry: ChannelRegistry,
-                                commander: ActorRef,
-                                connect: Connect)
+private[io] class UdpConnection(
+  udpConn:         UdpConnectedExt,
+  channelRegistry: ChannelRegistry,
+  commander:       ActorRef,
+  connect:         Connect)
   extends Actor with ActorLogging with RequiresMessageQueue[UnboundedMessageQueueSemantics] {
 
   import connect._
@@ -57,7 +59,7 @@ private[io] class UdpConnection(udpConn: UdpConnectedExt,
       channel = DatagramChannel.open
       channel.configureBlocking(false)
       val socket = channel.socket
-      options.foreach(_.beforeBind(channel))
+      options.foreach(_.beforeDatagramBind(socket))
       localAddress foreach socket.bind
       channel.connect(remoteAddress)
       channelRegistry.register(channel, OP_READ)
@@ -67,7 +69,10 @@ private[io] class UdpConnection(udpConn: UdpConnectedExt,
 
   def receive = {
     case registration: ChannelRegistration ⇒
-      options.foreach(_.afterConnect(channel))
+      options.foreach {
+        case v2: Inet.SocketOptionV2 ⇒ v2.afterConnect(channel.socket)
+        case _                       ⇒
+      }
       commander ! Connected
       context.become(connected(registration), discardOld = true)
   }
@@ -150,7 +155,8 @@ private[io] class UdpConnection(udpConn: UdpConnectedExt,
       thunk
     } catch {
       case NonFatal(e) ⇒
-        log.debug("Failure while connecting UDP channel to remote address [{}] local address [{}]: {}",
+        log.debug(
+          "Failure while connecting UDP channel to remote address [{}] local address [{}]: {}",
           remoteAddress, localAddress.getOrElse("undefined"), e)
         commander ! CommandFailed(connect)
         context.stop(self)

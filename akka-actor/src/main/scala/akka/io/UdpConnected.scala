@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.io
 
 import java.lang.{ Iterable ⇒ JIterable }
@@ -84,10 +85,11 @@ object UdpConnected extends ExtensionId[UdpConnectedExt] with ExtensionIdProvide
    * which is restricted to sending to and receiving from the given `remoteAddress`.
    * All received datagrams will be sent to the designated `handler` actor.
    */
-  final case class Connect(handler: ActorRef,
-                           remoteAddress: InetSocketAddress,
-                           localAddress: Option[InetSocketAddress] = None,
-                           options: immutable.Traversable[SocketOption] = Nil) extends Command
+  final case class Connect(
+    handler:       ActorRef,
+    remoteAddress: InetSocketAddress,
+    localAddress:  Option[InetSocketAddress]           = None,
+    options:       immutable.Traversable[SocketOption] = Nil) extends Command
 
   /**
    * Send this message to a connection actor (which had previously sent the
@@ -100,13 +102,13 @@ object UdpConnected extends ExtensionId[UdpConnectedExt] with ExtensionIdProvide
    * Send this message to a listener actor (which sent a [[Udp.Bound]] message) to
    * have it stop reading datagrams from the network. If the O/S kernel’s receive
    * buffer runs full then subsequent datagrams will be silently discarded.
-   * Re-enable reading from the socket using the [[ResumeReading]] command.
+   * Re-enable reading from the socket using the `ResumeReading` command.
    */
   case object SuspendReading extends Command
 
   /**
    * This message must be sent to the listener actor to re-enable reading from
-   * the socket after a [[SuspendReading]] command.
+   * the socket after a `SuspendReading` command.
    */
   case object ResumeReading extends Command
 
@@ -137,7 +139,7 @@ object UdpConnected extends ExtensionId[UdpConnectedExt] with ExtensionIdProvide
 
   /**
    * This message is sent by the connection actor to the actor which sent the
-   * [[Disconnect]] message when the UDP socket has been closed.
+   * `Disconnect` message when the UDP socket has been closed.
    */
   sealed trait Disconnected extends Event
   case object Disconnected extends Disconnected
@@ -176,21 +178,24 @@ object UdpConnectedMessage {
    * which is restricted to sending to and receiving from the given `remoteAddress`.
    * All received datagrams will be sent to the designated `handler` actor.
    */
-  def connect(handler: ActorRef,
-              remoteAddress: InetSocketAddress,
-              localAddress: InetSocketAddress,
-              options: JIterable[SocketOption]): Command = Connect(handler, remoteAddress, Some(localAddress), options)
+  def connect(
+    handler:       ActorRef,
+    remoteAddress: InetSocketAddress,
+    localAddress:  InetSocketAddress,
+    options:       JIterable[SocketOption]): Command = Connect(handler, remoteAddress, Some(localAddress), options)
   /**
    * Connect without specifying the `localAddress`.
    */
-  def connect(handler: ActorRef,
-              remoteAddress: InetSocketAddress,
-              options: JIterable[SocketOption]): Command = Connect(handler, remoteAddress, None, options)
+  def connect(
+    handler:       ActorRef,
+    remoteAddress: InetSocketAddress,
+    options:       JIterable[SocketOption]): Command = Connect(handler, remoteAddress, None, options)
   /**
    * Connect without specifying the `localAddress` or `options`.
    */
-  def connect(handler: ActorRef,
-              remoteAddress: InetSocketAddress): Command = Connect(handler, remoteAddress, None, Nil)
+  def connect(
+    handler:       ActorRef,
+    remoteAddress: InetSocketAddress): Command = Connect(handler, remoteAddress, None, Nil)
 
   /**
    * This message is understood by the connection actors to send data to their
@@ -231,13 +236,13 @@ object UdpConnectedMessage {
    * Send this message to a listener actor (which sent a [[Udp.Bound]] message) to
    * have it stop reading datagrams from the network. If the O/S kernel’s receive
    * buffer runs full then subsequent datagrams will be silently discarded.
-   * Re-enable reading from the socket using the [[UdpConnected.ResumeReading]] command.
+   * Re-enable reading from the socket using the `UdpConnected.ResumeReading` command.
    */
   def suspendReading: Command = SuspendReading
 
   /**
    * This message must be sent to the listener actor to re-enable reading from
-   * the socket after a [[UdpConnected.SuspendReading]] command.
+   * the socket after a `UdpConnected.SuspendReading` command.
    */
   def resumeReading: Command = ResumeReading
 

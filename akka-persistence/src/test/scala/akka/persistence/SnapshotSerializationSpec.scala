@@ -1,12 +1,12 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.persistence
 
 import akka.actor.{ Props, ActorRef }
 import akka.serialization.Serializer
-import akka.testkit.{ ImplicitSender, AkkaSpec }
+import akka.testkit.{ ImplicitSender }
 import java.io._
 
 object SnapshotSerializationSpec {
@@ -47,45 +47,49 @@ object SnapshotSerializationSpec {
     }
   }
 
-  class TestProcessor(name: String, probe: ActorRef) extends NamedProcessor(name) {
-    def receive = {
+  class TestPersistentActor(name: String, probe: ActorRef) extends NamedPersistentActor(name) {
+
+    override def receiveRecover: Receive = {
+      case SnapshotOffer(md, s) ⇒ probe ! ((md, s))
+      case RecoveryCompleted    ⇒ // ignore
+      case other                ⇒ probe ! other
+    }
+
+    override def receiveCommand = {
       case s: String               ⇒ saveSnapshot(new MySnapshot(s))
       case SaveSnapshotSuccess(md) ⇒ probe ! md.sequenceNr
-      case SnapshotOffer(md, s)    ⇒ probe ! ((md, s))
-      case RecoveryCompleted       ⇒ // ignore
       case other                   ⇒ probe ! other
     }
   }
 
 }
 
-class SnapshotSerializationSpec extends AkkaSpec(PersistenceSpec.config("leveldb", "SnapshotSerializationSpec", serialization = "off", extraConfig = Some(
+class SnapshotSerializationSpec extends PersistenceSpec(PersistenceSpec.config("leveldb", "SnapshotSerializationSpec", serialization = "off", extraConfig = Some(
   """
-    |akka.actor {
-    |  serializers {
-    |    my-snapshot = "akka.persistence.SnapshotSerializationSpec$MySerializer"
-    |  }
-    |  serialization-bindings {
-    |    "akka.persistence.SnapshotSerializationSpec$SerializationMarker" = my-snapshot
-    |  }
-    |}
-  """.stripMargin))) with PersistenceSpec with ImplicitSender {
+    akka.actor {
+      serializers {
+        my-snapshot = "akka.persistence.SnapshotSerializationSpec$MySerializer"
+      }
+      serialization-bindings {
+        "akka.persistence.SnapshotSerializationSpec$SerializationMarker" = my-snapshot
+      }
+    }
+  """))) with ImplicitSender {
 
   import SnapshotSerializationSpec._
   import SnapshotSerializationSpec.XXXXXXXXXXXXXXXXXXXX._
 
-  "A processor with custom Serializer" must {
+  "A PersistentActor with custom Serializer" must {
     "be able to handle serialization header of more than 255 bytes" in {
-      val sProcessor = system.actorOf(Props(classOf[TestProcessor], name, testActor))
+      val sPersistentActor = system.actorOf(Props(classOf[TestPersistentActor], name, testActor))
       val persistenceId = name
 
-      sProcessor ! "blahonga"
+      sPersistentActor ! "blahonga"
       expectMsg(0)
-      val lProcessor = system.actorOf(Props(classOf[TestProcessor], name, testActor))
-      lProcessor ! Recover()
+      val lPersistentActor = system.actorOf(Props(classOf[TestPersistentActor], name, testActor))
       expectMsgPF() {
         case (SnapshotMetadata(`persistenceId`, 0, timestamp), state) ⇒
-          state should be(new MySnapshot("blahonga"))
+          state should ===(new MySnapshot("blahonga"))
           timestamp should be > (0L)
       }
     }

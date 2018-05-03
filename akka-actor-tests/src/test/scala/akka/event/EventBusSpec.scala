@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.event
@@ -9,12 +9,10 @@ import language.postfixOps
 import org.scalatest.BeforeAndAfterEach
 import akka.testkit._
 import scala.concurrent.duration._
-import java.util.concurrent.atomic._
 
-import akka.actor.{ Props, Actor, ActorRef, ActorSystem, PoisonPill, RootActorPath }
-import akka.japi.{ Procedure, Function }
+import akka.actor.{ Props, Actor, ActorRef, ActorSystem, PoisonPill }
+import akka.japi.{ Procedure }
 import com.typesafe.config.{ Config, ConfigFactory }
-import scala.concurrent.Await
 
 object EventBusSpec {
   class TestActorWrapperActor(testActor: ActorRef) extends Actor {
@@ -24,9 +22,7 @@ object EventBusSpec {
   }
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 abstract class EventBusSpec(busName: String, conf: Config = ConfigFactory.empty()) extends AkkaSpec(conf) with BeforeAndAfterEach {
-  import EventBusSpec._
   type BusType <: EventBus
 
   def createNewEventBus(): BusType
@@ -52,37 +48,37 @@ abstract class EventBusSpec(busName: String, conf: Config = ConfigFactory.empty(
     val subscriber = createNewSubscriber()
 
     "allow subscribers" in {
-      bus.subscribe(subscriber, classifier) should be(true)
+      bus.subscribe(subscriber, classifier) should ===(true)
     }
 
     "allow to unsubscribe already existing subscriber" in {
-      bus.unsubscribe(subscriber, classifier) should be(true)
+      bus.unsubscribe(subscriber, classifier) should ===(true)
     }
 
     "not allow to unsubscribe non-existing subscriber" in {
       val sub = createNewSubscriber()
-      bus.unsubscribe(sub, classifier) should be(false)
+      bus.unsubscribe(sub, classifier) should ===(false)
       disposeSubscriber(system, sub)
     }
 
     "not allow for the same subscriber to subscribe to the same channel twice" in {
-      bus.subscribe(subscriber, classifier) should be(true)
-      bus.subscribe(subscriber, classifier) should be(false)
-      bus.unsubscribe(subscriber, classifier) should be(true)
+      bus.subscribe(subscriber, classifier) should ===(true)
+      bus.subscribe(subscriber, classifier) should ===(false)
+      bus.unsubscribe(subscriber, classifier) should ===(true)
     }
 
     "not allow for the same subscriber to unsubscribe to the same channel twice" in {
-      bus.subscribe(subscriber, classifier) should be(true)
-      bus.unsubscribe(subscriber, classifier) should be(true)
-      bus.unsubscribe(subscriber, classifier) should be(false)
+      bus.subscribe(subscriber, classifier) should ===(true)
+      bus.unsubscribe(subscriber, classifier) should ===(true)
+      bus.unsubscribe(subscriber, classifier) should ===(false)
     }
 
     "allow to add multiple subscribers" in {
       val subscribers = (1 to 10) map { _ ⇒ createNewSubscriber() }
       val events = createEvents(10)
       val classifiers = events map getClassifierFor
-      subscribers.zip(classifiers) forall { case (s, c) ⇒ bus.subscribe(s, c) } should be(true)
-      subscribers.zip(classifiers) forall { case (s, c) ⇒ bus.unsubscribe(s, c) } should be(true)
+      subscribers.zip(classifiers) forall { case (s, c) ⇒ bus.subscribe(s, c) } should ===(true)
+      subscribers.zip(classifiers) forall { case (s, c) ⇒ bus.unsubscribe(s, c) } should ===(true)
 
       subscribers foreach (disposeSubscriber(system, _))
     }
@@ -114,10 +110,10 @@ abstract class EventBusSpec(busName: String, conf: Config = ConfigFactory.empty(
     "publish the given event to all intended subscribers" in {
       val range = 0 until 10
       val subscribers = range map (_ ⇒ createNewSubscriber())
-      subscribers foreach { s ⇒ bus.subscribe(s, classifier) should be(true) }
+      subscribers foreach { s ⇒ bus.subscribe(s, classifier) should ===(true) }
       bus.publish(event)
       range foreach { _ ⇒ expectMsg(event) }
-      subscribers foreach { s ⇒ bus.unsubscribe(s, classifier) should be(true); disposeSubscriber(system, s) }
+      subscribers foreach { s ⇒ bus.unsubscribe(s, classifier) should ===(true); disposeSubscriber(system, s) }
     }
 
     "not publish the given event to any other subscribers than the intended ones" in {
@@ -147,7 +143,7 @@ abstract class EventBusSpec(busName: String, conf: Config = ConfigFactory.empty(
 
 object ActorEventBusSpec {
   class MyActorEventBus(protected val system: ActorSystem) extends ActorEventBus
-    with ActorClassification with ActorClassifier {
+    with ManagedActorClassification with ActorClassifier {
 
     type Event = Notification
 
@@ -179,7 +175,7 @@ class ActorEventBusSpec(conf: Config) extends EventBusSpec("ActorEventBus", conf
 
   def disposeSubscriber(system: ActorSystem, subscriber: BusType#Subscriber): Unit = system.stop(subscriber)
 
-  // ActorClassification specific tests
+  // ManagedActorClassification specific tests
 
   "must unsubscribe subscriber when it terminates" in {
     val a1 = createSubscriber(system.deadLetters)

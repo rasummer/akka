@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.transport.netty
 
 import akka.actor.Address
@@ -16,15 +17,17 @@ import scala.concurrent.{ Future, Promise }
 /**
  * INTERNAL API
  */
+@deprecated("Deprecated in favour of Artery (the new Aeron/UDP based remoting implementation).", since = "2.5.0")
 private[remote] trait UdpHandlers extends CommonHandlers {
 
   override def createHandle(channel: Channel, localAddress: Address, remoteAddress: Address): AssociationHandle =
     new UdpAssociationHandle(localAddress, remoteAddress, channel, transport)
 
-  override def registerListener(channel: Channel,
-                                listener: HandleEventListener,
-                                msg: ChannelBuffer,
-                                remoteSocketAddress: InetSocketAddress): Unit = {
+  override def registerListener(
+    channel:             Channel,
+    listener:            HandleEventListener,
+    msg:                 ChannelBuffer,
+    remoteSocketAddress: InetSocketAddress): Unit = {
     transport.udpConnectionTable.putIfAbsent(remoteSocketAddress, listener) match {
       case null ⇒ listener notify InboundPayload(ByteString(msg.array()))
       case oldReader ⇒
@@ -52,8 +55,11 @@ private[remote] trait UdpHandlers extends CommonHandlers {
 /**
  * INTERNAL API
  */
+@deprecated("Deprecated in favour of Artery (the new Aeron/UDP based remoting implementation).", since = "2.5.0")
 private[remote] class UdpServerHandler(_transport: NettyTransport, _associationListenerFuture: Future[AssociationEventListener])
   extends ServerHandler(_transport, _associationListenerFuture) with UdpHandlers {
+
+  transport.system.log.warning("The netty.udp transport is deprecated, please use Artery instead. See: http://doc.akka.io/docs/akka/2.4/scala/remoting-artery.html")
 
   override def initUdp(channel: Channel, remoteSocketAddress: SocketAddress, msg: ChannelBuffer): Unit =
     initInbound(channel, remoteSocketAddress, msg)
@@ -62,8 +68,11 @@ private[remote] class UdpServerHandler(_transport: NettyTransport, _associationL
 /**
  * INTERNAL API
  */
+@deprecated("Deprecated in favour of Artery (the new Aeron/UDP based remoting implementation).", since = "2.5.0")
 private[remote] class UdpClientHandler(_transport: NettyTransport, remoteAddress: Address)
   extends ClientHandler(_transport, remoteAddress) with UdpHandlers {
+
+  transport.system.log.warning("The netty.udp transport is deprecated, please use Artery instead. See: http://doc.akka.io/docs/akka/2.4/scala/remoting-artery.html")
 
   override def initUdp(channel: Channel, remoteSocketAddress: SocketAddress, msg: ChannelBuffer): Unit =
     initOutbound(channel, remoteSocketAddress, msg)
@@ -72,10 +81,11 @@ private[remote] class UdpClientHandler(_transport: NettyTransport, remoteAddress
 /**
  * INTERNAL API
  */
-private[remote] class UdpAssociationHandle(val localAddress: Address,
-                                           val remoteAddress: Address,
-                                           private val channel: Channel,
-                                           private val transport: NettyTransport) extends AssociationHandle {
+private[remote] class UdpAssociationHandle(
+  val localAddress:      Address,
+  val remoteAddress:     Address,
+  private val channel:   Channel,
+  private val transport: NettyTransport) extends AssociationHandle {
 
   override val readHandlerPromise: Promise[HandleEventListener] = Promise()
 

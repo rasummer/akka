@@ -1,11 +1,12 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.contrib.mailbox
 
 import com.typesafe.config.ConfigFactory
 
-import akka.actor.{ Actor, ActorSystem, DeadLetter, PoisonPill, Props, Terminated, actorRef2Scala }
+import akka.actor.{ Actor, ActorSystem, DeadLetter, PoisonPill, Props, actorRef2Scala }
 import akka.testkit.{ AkkaSpec, EventFilter, ImplicitSender }
 
 object PeekMailboxSpec {
@@ -83,7 +84,7 @@ class PeekMailboxSpec extends AkkaSpec("""
         a ! "DIE" // stays in the mailbox
       }
       expectMsg("DIE")
-      expectMsgType[DeadLetter].message should be("DIE")
+      expectMsgType[DeadLetter].message should ===("DIE")
       expectTerminated(a)
     }
 
@@ -121,7 +122,8 @@ object MyApp extends App {
     }
     """))
 
-  val myActor = system.actorOf(Props[MyActor].withDispatcher("peek-dispatcher"),
+  val myActor = system.actorOf(
+    Props[MyActor].withDispatcher("peek-dispatcher"),
     name = "myActor")
 
   myActor ! "Hello"

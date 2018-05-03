@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import language.postfixOps
@@ -13,13 +14,6 @@ import scala.concurrent.Await
 import akka.ConfigurationException
 import com.typesafe.config.ConfigFactory
 import akka.pattern.{ ask, pipe }
-import java.util.concurrent.ConcurrentHashMap
-import com.typesafe.config.Config
-import akka.dispatch.Dispatchers
-import akka.util.Collections.EmptyImmutableSeq
-import akka.util.Timeout
-import java.util.concurrent.atomic.AtomicInteger
-import akka.routing._
 
 object RoutingSpec {
 
@@ -53,7 +47,6 @@ object RoutingSpec {
 
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class RoutingSpec extends AkkaSpec(RoutingSpec.config) with DefaultTimeout with ImplicitSender {
   implicit val ec = system.dispatcher
   import RoutingSpec._
@@ -70,7 +63,7 @@ class RoutingSpec extends AkkaSpec(RoutingSpec.config) with DefaultTimeout with 
       watch(router)
       watch(c2)
       system.stop(c2)
-      expectTerminated(c2).existenceConfirmed should be(true)
+      expectTerminated(c2).existenceConfirmed should ===(true)
       // it might take a while until the Router has actually processed the Terminated message
       awaitCond {
         router ! ""
@@ -81,7 +74,7 @@ class RoutingSpec extends AkkaSpec(RoutingSpec.config) with DefaultTimeout with 
         res == Seq(c1, c1)
       }
       system.stop(c1)
-      expectTerminated(router).existenceConfirmed should be(true)
+      expectTerminated(router).existenceConfirmed should ===(true)
     }
 
     "not terminate when resizer is used" in {
@@ -99,7 +92,7 @@ class RoutingSpec extends AkkaSpec(RoutingSpec.config) with DefaultTimeout with 
       Await.ready(latch, remainingOrDefault)
       router ! GetRoutees
       val routees = expectMsgType[Routees].routees
-      routees.size should be(2)
+      routees.size should ===(2)
       routees foreach { _.send(PoisonPill, testActor) }
       // expect no Terminated
       expectNoMsg(2.seconds)
@@ -108,7 +101,7 @@ class RoutingSpec extends AkkaSpec(RoutingSpec.config) with DefaultTimeout with 
     "use configured nr-of-instances when FromConfig" in {
       val router = system.actorOf(FromConfig.props(routeeProps = Props[TestActor]), "router1")
       router ! GetRoutees
-      expectMsgType[Routees].routees.size should be(3)
+      expectMsgType[Routees].routees.size should ===(3)
       watch(router)
       system.stop(router)
       expectTerminated(router)
@@ -117,7 +110,7 @@ class RoutingSpec extends AkkaSpec(RoutingSpec.config) with DefaultTimeout with 
     "use configured nr-of-instances when router is specified" in {
       val router = system.actorOf(RoundRobinPool(nrOfInstances = 2).props(routeeProps = Props[TestActor]), "router2")
       router ! GetRoutees
-      expectMsgType[Routees].routees.size should be(3)
+      expectMsgType[Routees].routees.size should ===(3)
       system.stop(router)
     }
 
@@ -134,7 +127,7 @@ class RoutingSpec extends AkkaSpec(RoutingSpec.config) with DefaultTimeout with 
         routeeProps = Props[TestActor]), "router3")
       Await.ready(latch, remainingOrDefault)
       router ! GetRoutees
-      expectMsgType[Routees].routees.size should be(3)
+      expectMsgType[Routees].routees.size should ===(3)
       system.stop(router)
     }
 
@@ -191,7 +184,7 @@ class RoutingSpec extends AkkaSpec(RoutingSpec.config) with DefaultTimeout with 
       EventFilter[Exception]("die", occurrences = 1) intercept {
         router ! "die"
       }
-      expectMsgType[Exception].getMessage should be("die")
+      expectMsgType[Exception].getMessage should ===("die")
       expectMsg("restarted")
       expectMsg("restarted")
       expectMsg("restarted")

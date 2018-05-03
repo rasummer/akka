@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import com.typesafe.config.ConfigFactory
@@ -26,6 +27,17 @@ object MinMembersBeforeUpMultiJvmSpec extends MultiNodeConfig {
     withFallback(MultiNodeClusterSpec.clusterConfigWithFailureDetectorPuppet))
 }
 
+object MinMembersBeforeUpWithWeaklyUpMultiJvmSpec extends MultiNodeConfig {
+  val first = role("first")
+  val second = role("second")
+  val third = role("third")
+
+  commonConfig(debugConfig(on = false).withFallback(ConfigFactory.parseString("""
+      akka.cluster.min-nr-of-members = 3
+      akka.cluster.allow-weakly-up-members = on""")).
+    withFallback(MultiNodeClusterSpec.clusterConfigWithFailureDetectorPuppet))
+}
+
 object MinMembersOfRoleBeforeUpMultiJvmSpec extends MultiNodeConfig {
   val first = role("first")
   val second = role("second")
@@ -46,6 +58,10 @@ class MinMembersBeforeUpMultiJvmNode1 extends MinMembersBeforeUpSpec
 class MinMembersBeforeUpMultiJvmNode2 extends MinMembersBeforeUpSpec
 class MinMembersBeforeUpMultiJvmNode3 extends MinMembersBeforeUpSpec
 
+class MinMembersBeforeUpWithWeaklyUpMultiJvmNode1 extends MinMembersBeforeUpSpec
+class MinMembersBeforeUpWithWeaklyUpMultiJvmNode2 extends MinMembersBeforeUpSpec
+class MinMembersBeforeUpWithWeaklyUpMultiJvmNode3 extends MinMembersBeforeUpSpec
+
 class MinMembersOfRoleBeforeUpMultiJvmNode1 extends MinMembersOfRoleBeforeUpSpec
 class MinMembersOfRoleBeforeUpMultiJvmNode2 extends MinMembersOfRoleBeforeUpSpec
 class MinMembersOfRoleBeforeUpMultiJvmNode3 extends MinMembersOfRoleBeforeUpSpec
@@ -58,6 +74,19 @@ abstract class MinMembersBeforeUpSpec extends MinMembersBeforeUpBase(MinMembersB
 
   "Cluster leader" must {
     "wait with moving members to UP until minimum number of members have joined" taggedAs LongRunningTest in {
+      testWaitMovingMembersToUp()
+    }
+  }
+}
+
+abstract class MinMembersBeforeUpWithWeaklyUpSpec extends MinMembersBeforeUpBase(MinMembersBeforeUpMultiJvmSpec) {
+
+  override def first: RoleName = MinMembersBeforeUpWithWeaklyUpMultiJvmSpec.first
+  override def second: RoleName = MinMembersBeforeUpWithWeaklyUpMultiJvmSpec.second
+  override def third: RoleName = MinMembersBeforeUpWithWeaklyUpMultiJvmSpec.third
+
+  "Cluster leader" must {
+    "wait with moving members to UP until minimum number of members have joined with weakly up enabled" taggedAs LongRunningTest in {
       testWaitMovingMembersToUp()
     }
   }
@@ -94,12 +123,12 @@ abstract class MinMembersBeforeUpBase(multiNodeConfig: MultiNodeConfig)
       cluster join myself
       awaitAssert {
         clusterView.refreshCurrentState()
-        clusterView.status should be(Joining)
+        clusterView.status should ===(Joining)
       }
     }
     enterBarrier("first-started")
 
-    onUpLatch.isOpen should be(false)
+    onUpLatch.isOpen should ===(false)
 
     runOn(second) {
       cluster.join(first)
@@ -108,14 +137,14 @@ abstract class MinMembersBeforeUpBase(multiNodeConfig: MultiNodeConfig)
       val expectedAddresses = Set(first, second) map address
       awaitAssert {
         clusterView.refreshCurrentState()
-        clusterView.members.map(_.address) should be(expectedAddresses)
+        clusterView.members.map(_.address) should ===(expectedAddresses)
       }
-      clusterView.members.map(_.status) should be(Set(Joining))
+      clusterView.members.map(_.status) should ===(Set(Joining))
       // and it should not change
       1 to 5 foreach { _ ⇒
         Thread.sleep(1000)
-        clusterView.members.map(_.address) should be(expectedAddresses)
-        clusterView.members.map(_.status) should be(Set(Joining))
+        clusterView.members.map(_.address) should ===(expectedAddresses)
+        clusterView.members.map(_.status) should ===(Set(Joining))
       }
     }
     enterBarrier("second-joined")

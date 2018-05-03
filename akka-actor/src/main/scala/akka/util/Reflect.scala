@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.util
 import scala.util.control.NonFatal
 import java.lang.reflect.Constructor
@@ -28,7 +29,7 @@ private[akka] object Reflect {
    */
   val getCallerClass: Option[Int ⇒ Class[_]] = {
     try {
-      val c = Class.forName("sun.reflect.Reflection");
+      val c = Class.forName("sun.reflect.Reflection")
       val m = c.getMethod("getCallerClass", Array(classOf[Int]): _*)
       Some((i: Int) ⇒ m.invoke(null, Array[AnyRef](i.asInstanceOf[java.lang.Integer]): _*).asInstanceOf[Class[_]])
     } catch {
@@ -39,7 +40,6 @@ private[akka] object Reflect {
   /**
    * INTERNAL API
    * @param clazz the class which to instantiate an instance of
-   * @tparam T the type of the instance that will be created
    * @return a new instance from the default constructor of the given class
    */
   private[akka] def instantiate[T](clazz: Class[T]): T = try clazz.newInstance catch {
@@ -59,7 +59,7 @@ private[akka] object Reflect {
 
   /**
    * INTERNAL API
-   * Invokes the constructor with the the given arguments.
+   * Invokes the constructor with the given arguments.
    */
   private[akka] def instantiate[T](constructor: Constructor[T], args: immutable.Seq[Any]): T = {
     constructor.setAccessible(true)
@@ -113,7 +113,6 @@ private[akka] object Reflect {
   /**
    * INTERNAL API
    * @param clazz the class which to instantiate an instance of
-   * @tparam T the type of the instance that will be created
    * @return a function which when applied will create a new instance from the default constructor of the given class
    */
   private[akka] def instantiator[T](clazz: Class[T]): () ⇒ T = () ⇒ instantiate(clazz)
@@ -132,5 +131,49 @@ private[akka] object Reflect {
       }
     }
     rec(root)
+  }
+
+  /**
+   * INTERNAL API
+   * Set a val inside a class.
+   */
+  @tailrec protected[akka] final def lookupAndSetField(clazz: Class[_], instance: AnyRef, name: String, value: Any): Boolean = {
+    @tailrec def clearFirst(fields: Array[java.lang.reflect.Field], idx: Int): Boolean =
+      if (idx < fields.length) {
+        val field = fields(idx)
+        if (field.getName == name) {
+          field.setAccessible(true)
+          field.set(instance, value)
+          true
+        } else clearFirst(fields, idx + 1)
+      } else false
+
+    clearFirst(clazz.getDeclaredFields, 0) || {
+      clazz.getSuperclass match {
+        case null ⇒ false // clazz == classOf[AnyRef]
+        case sc   ⇒ lookupAndSetField(sc, instance, name, value)
+      }
+    }
+  }
+
+  /**
+   * INTERNAL API
+   */
+  private[akka] def findClassLoader(): ClassLoader = {
+    def findCaller(get: Int ⇒ Class[_]): ClassLoader =
+      Iterator.from(2 /*is the magic number, promise*/ ).map(get) dropWhile { c ⇒
+        c != null &&
+          (c.getName.startsWith("akka.actor.ActorSystem") ||
+            c.getName.startsWith("scala.Option") ||
+            c.getName.startsWith("scala.collection.Iterator") ||
+            c.getName.startsWith("akka.util.Reflect"))
+      } next () match {
+        case null ⇒ getClass.getClassLoader
+        case c    ⇒ c.getClassLoader
+      }
+
+    Option(Thread.currentThread.getContextClassLoader) orElse
+      (Reflect.getCallerClass map findCaller) getOrElse
+      getClass.getClassLoader
   }
 }

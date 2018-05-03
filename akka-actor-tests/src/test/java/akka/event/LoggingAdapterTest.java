@@ -1,17 +1,26 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.event;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSystem;
 import akka.actor.Props;
-import akka.testkit.JavaTestKit;
+import akka.testkit.AkkaJUnitActorSystemResource;
 import akka.event.Logging.Error;
 import akka.event.ActorWithMDC.Log;
 import static akka.event.Logging.*;
 
+import akka.testkit.javadsl.TestKit;
 import com.typesafe.config.Config;
 import com.typesafe.config.ConfigFactory;
+import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
+import org.scalatest.junit.JUnitSuite;
 import scala.concurrent.duration.Duration;
+import scala.util.control.NoStackTrace;
 
 import java.util.*;
 import java.util.concurrent.TimeUnit;
@@ -21,23 +30,38 @@ import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertSame;
 
 
-public class LoggingAdapterTest {
+public class LoggingAdapterTest extends JUnitSuite {
 
     private static final Config config = ConfigFactory.parseString(
             "akka.loglevel = DEBUG\n" +
             "akka.actor.serialize-messages = off"
     );
 
+    @Rule
+    public AkkaJUnitActorSystemResource actorSystemResource = 
+        new AkkaJUnitActorSystemResource("LoggingAdapterTest", config);
+
+    private ActorSystem system = null;
+
+    @Before
+    public void beforeEach() {
+       system = actorSystemResource.getSystem();
+    }
+
     @Test
     public void mustFormatMessage() {
-        final ActorSystem system = ActorSystem.create("test-system", config);
         final LoggingAdapter log = Logging.getLogger(system, this);
         new LogJavaTestKit(system) {{
             system.eventStream().subscribe(getRef(), LogEvent.class);
             log.error("One arg message: {}", "the arg");
             expectLog(ErrorLevel(), "One arg message: the arg");
 
-            Throwable cause = new IllegalStateException("This state is illegal");
+            Throwable cause = new IllegalStateException("This state is illegal") {
+                @Override
+                public synchronized Throwable fillInStackTrace() {
+                    return this; // no stack trace
+                }
+            };
             log.error(cause, "Two args message: {}, {}", "an arg", "another arg");
             expectLog(ErrorLevel(), "Two args message: an arg, another arg", cause);
 
@@ -59,33 +83,31 @@ public class LoggingAdapterTest {
 
     @Test
     public void mustCallMdcForEveryLog() throws Exception {
-        final ActorSystem system = ActorSystem.create("test-system", config);
         new LogJavaTestKit(system) {{
             system.eventStream().subscribe(getRef(), LogEvent.class);
             ActorRef ref = system.actorOf(Props.create(ActorWithMDC.class));
 
             ref.tell(new Log(ErrorLevel(), "An Error"), system.deadLetters());
-            expectLog(ErrorLevel(), "An Error", "Map(messageLength -> 8)");
+            expectLog(ErrorLevel(), "An Error", "{messageLength=8}");
             ref.tell(new Log(WarningLevel(), "A Warning"), system.deadLetters());
-            expectLog(WarningLevel(), "A Warning", "Map(messageLength -> 9)");
+            expectLog(WarningLevel(), "A Warning", "{messageLength=9}");
             ref.tell(new Log(InfoLevel(), "Some Info"), system.deadLetters());
-            expectLog(InfoLevel(), "Some Info", "Map(messageLength -> 9)");
+            expectLog(InfoLevel(), "Some Info", "{messageLength=9}");
             ref.tell(new Log(DebugLevel(), "No MDC for 4th call"), system.deadLetters());
             expectLog(DebugLevel(), "No MDC for 4th call");
             ref.tell(new Log(Logging.DebugLevel(), "And now yes, a debug with MDC"), system.deadLetters());
-            expectLog(DebugLevel(), "And now yes, a debug with MDC", "Map(messageLength -> 29)");
+            expectLog(DebugLevel(), "And now yes, a debug with MDC", "{messageLength=29}");
         }};
     }
 
     @Test
     public void mustSupportMdcNull() throws Exception {
-        final ActorSystem system = ActorSystem.create("test-system", config);
         new LogJavaTestKit(system) {{
             system.eventStream().subscribe(getRef(), LogEvent.class);
             ActorRef ref = system.actorOf(Props.create(ActorWithMDC.class));
 
             ref.tell(new Log(InfoLevel(), "Null MDC"), system.deadLetters());
-            expectLog(InfoLevel(), "Null MDC", "Map()");
+            expectLog(InfoLevel(), "Null MDC", "{}");
         }};
     }
 
@@ -102,9 +124,9 @@ public class LoggingAdapterTest {
         assertNotNull(new Debug("logSource", this.getClass(), "The message"));
     }
 
-    private static class LogJavaTestKit extends JavaTestKit {
+    private static class LogJavaTestKit extends TestKit {
 
-        private static final String emptyMDC = "Map()";
+        private static final String emptyMDC = "{}";
 
         public LogJavaTestKit(ActorSystem system) {
             super(system);
@@ -123,19 +145,17 @@ public class LoggingAdapterTest {
         }
 
         void expectLog(final Object level, final String message, final Throwable cause, final String mdc) {
-            new ExpectMsg<Void>(Duration.create(3, TimeUnit.SECONDS), "LogEvent") {
-                protected Void match(Object event) {
-                    LogEvent log = (LogEvent) event;
-                    assertEquals(message, log.message());
-                    assertEquals(level, log.level());
-                    assertEquals(mdc, log.mdc().toString());
-                    if(cause != null) {
-                        Error error = (Error) log;
-                        assertSame(cause, error.cause());
-                    }
-                    return null;
+            expectMsgPF(Duration.create(3, TimeUnit.SECONDS), "LogEvent", event -> {
+                LogEvent log = (LogEvent) event;
+                assertEquals(message, log.message());
+                assertEquals(level, log.level());
+                assertEquals(mdc, log.getMDC().toString());
+                if(cause != null) {
+                    Error error = (Error) log;
+                    assertSame(cause, error.cause());
                 }
-            };
+                return null;
+            });
         }
     }
 }

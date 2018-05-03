@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.actor.dispatch
 
 import java.util.concurrent.{ CountDownLatch, TimeUnit }
@@ -6,7 +10,6 @@ import akka.testkit._
 import akka.actor.{ Props, Actor }
 import akka.testkit.AkkaSpec
 import org.scalatest.BeforeAndAfterEach
-import akka.dispatch.{ PinnedDispatcher, Dispatchers }
 import scala.concurrent.Await
 import akka.pattern.ask
 
@@ -26,7 +29,6 @@ object PinnedActorSpec {
   }
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class PinnedActorSpec extends AkkaSpec(PinnedActorSpec.config) with BeforeAndAfterEach with DefaultTimeout {
   import PinnedActorSpec._
 

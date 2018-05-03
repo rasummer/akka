@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.dispatch
@@ -59,7 +59,7 @@ private[akka] trait BatchingExecutor extends Executor {
     protected final def resubmitUnbatched(): Boolean = {
       val current = _tasksLocal.get()
       _tasksLocal.remove()
-      if ((current eq this) && !current.isEmpty) { // Resubmit outselves if something bad happened and we still have work to do
+      if ((current eq this) && !current.isEmpty) { // Resubmit ourselves if something bad happened and we still have work to do
         unbatchedExecute(current) //TODO what if this submission fails?
         true
       } else false
@@ -78,22 +78,23 @@ private[akka] trait BatchingExecutor extends Executor {
     }
   }
 
+  private[this] val _blockContext = new ThreadLocal[BlockContext]()
+
   private[this] final class BlockableBatch extends AbstractBatch with BlockContext {
-    private var parentBlockContext: BlockContext = _
     // this method runs in the delegate ExecutionContext's thread
     override final def run(): Unit = {
       require(_tasksLocal.get eq null)
       _tasksLocal set this // Install ourselves as the current batch
-      val prevBlockContext = BlockContext.current
+      val firstInvocation = _blockContext.get eq null
+      if (firstInvocation) _blockContext.set(BlockContext.current)
       BlockContext.withBlockContext(this) {
-        parentBlockContext = prevBlockContext
         try processBatch(this) catch {
           case t: Throwable ⇒
             resubmitUnbatched()
             throw t
         } finally {
           _tasksLocal.remove()
-          parentBlockContext = null
+          if (firstInvocation) _blockContext.remove()
         }
       }
     }
@@ -102,8 +103,7 @@ private[akka] trait BatchingExecutor extends Executor {
       // if we know there will be blocking, we don't want to keep tasks queued up because it could deadlock.
       resubmitUnbatched()
       // now delegate the blocking to the previous BC
-      require(parentBlockContext ne null)
-      parentBlockContext.blockOn(thunk)
+      _blockContext.get.blockOn(thunk)
     }
   }
 

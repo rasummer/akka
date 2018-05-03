@@ -1,10 +1,9 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster
 
-import akka.testkit.AkkaSpec
 import scala.collection.immutable.{ TreeMap, SortedSet }
 import org.scalatest.WordSpec
 import org.scalatest.Matchers
@@ -28,13 +27,13 @@ object VectorClockPerfSpec {
 
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class VectorClockPerfSpec extends WordSpec with Matchers {
   import VectorClock._
   import VectorClockPerfSpec._
 
   val clockSize = sys.props.get("akka.cluster.VectorClockPerfSpec.clockSize").getOrElse("1000").toInt
-  val iterations = sys.props.get("akka.cluster.VectorClockPerfSpec.iterations").getOrElse("10000").toInt
+  // increase for serious measurements
+  val iterations = sys.props.get("akka.cluster.VectorClockPerfSpec.iterations").getOrElse("1000").toInt
 
   val (vcBefore, nodes) = createVectorClockOfSize(clockSize)
   val firstNode = nodes.head
@@ -56,11 +55,11 @@ class VectorClockPerfSpec extends WordSpec with Matchers {
   }
 
   def compareTo(order: Ordering)(vc1: VectorClock, vc2: VectorClock): Unit = {
-    vc1 compareTo vc2 should be(order)
+    vc1 compareTo vc2 should ===(order)
   }
 
   def !==(vc1: VectorClock, vc2: VectorClock): Unit = {
-    vc1 == vc2 should be(false)
+    vc1 == vc2 should ===(false)
   }
 
   s"VectorClock comparisons of size $clockSize" must {

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
@@ -24,8 +24,11 @@ import akka.event.Logging
 import java.util.concurrent.atomic.AtomicInteger
 import java.lang.System.identityHashCode
 import akka.util.Helpers.ConfigOps
+import akka.testkit.LongRunningTest
 
 object SupervisorHierarchySpec {
+  import FSM.`→`
+
   class FireWorkerException(msg: String) extends Exception(msg)
 
   /**
@@ -79,7 +82,8 @@ object SupervisorHierarchySpec {
     extends DispatcherConfigurator(config, prerequisites) {
 
     private val instance: MessageDispatcher =
-      new Dispatcher(this,
+      new Dispatcher(
+        this,
         config.getString("id"),
         config.getInt("throughput"),
         config.getNanosDuration("throughput-deadline-time"),
@@ -430,11 +434,11 @@ object SupervisorHierarchySpec {
     var hierarchy: ActorRef = _
 
     override def preRestart(cause: Throwable, msg: Option[Any]) {
-      throw new ActorKilledException("I want to DIE")
+      throw ActorKilledException("I want to DIE")
     }
 
     override def postRestart(cause: Throwable) {
-      throw new ActorKilledException("I said I wanted to DIE, dammit!")
+      throw ActorKilledException("I said I wanted to DIE, dammit!")
     }
 
     override def postStop {
@@ -467,7 +471,7 @@ object SupervisorHierarchySpec {
     }
 
     onTransition {
-      case Init -> Stress ⇒
+      case Init → Stress ⇒
         self ! Work
         idleChildren = children
         activeChildren = children
@@ -532,7 +536,7 @@ object SupervisorHierarchySpec {
     }
 
     onTransition {
-      case Stress -> Finishing ⇒ ignoreFailConstr = true
+      case Stress → Finishing ⇒ ignoreFailConstr = true
     }
 
     when(Finishing) {
@@ -546,7 +550,7 @@ object SupervisorHierarchySpec {
     }
 
     onTransition {
-      case _ -> LastPing ⇒
+      case _ → LastPing ⇒
         idleChildren foreach (_ ! "ping")
         pingChildren ++= idleChildren
         idleChildren = Vector.empty
@@ -563,7 +567,7 @@ object SupervisorHierarchySpec {
     }
 
     onTransition {
-      case _ -> Stopping ⇒
+      case _ → Stopping ⇒
         ignoreNotResumedLogs = false
         hierarchy ! PingOfDeath
     }
@@ -596,7 +600,7 @@ object SupervisorHierarchySpec {
           stop
         }
       case Event(StateTimeout, _) ⇒
-        errors :+= self -> ErrorLog("timeout while Stopping", Vector.empty)
+        errors :+= self → ErrorLog("timeout while Stopping", Vector.empty)
         println(system.asInstanceOf[ActorSystemImpl].printTree)
         getErrors(hierarchy, 10)
         printErrors()
@@ -604,7 +608,7 @@ object SupervisorHierarchySpec {
         testActor ! "timeout in Stopping"
         stop
       case Event(e: ErrorLog, _) ⇒
-        errors :+= sender() -> e
+        errors :+= sender() → e
         goto(Failed)
     }
 
@@ -630,7 +634,7 @@ object SupervisorHierarchySpec {
     when(Failed, stateTimeout = 5.seconds.dilated) {
       case Event(e: ErrorLog, _) ⇒
         if (!e.msg.startsWith("not resumed") || !ignoreNotResumedLogs)
-          errors :+= sender() -> e
+          errors :+= sender() → e
         stay
       case Event(Terminated(r), _) if r == hierarchy ⇒
         printErrors()
@@ -650,8 +654,8 @@ object SupervisorHierarchySpec {
       target match {
         case l: LocalActorRef ⇒
           l.underlying.actor match {
-            case h: Hierarchy ⇒ errors :+= target -> ErrorLog("forced", h.log)
-            case _            ⇒ errors :+= target -> ErrorLog("fetched", stateCache.get(target.path).log)
+            case h: Hierarchy ⇒ errors :+= target → ErrorLog("forced", h.log)
+            case _            ⇒ errors :+= target → ErrorLog("fetched", stateCache.get(target.path).log)
           }
           if (depth > 0) {
             l.underlying.children foreach (getErrors(_, depth - 1))
@@ -663,8 +667,8 @@ object SupervisorHierarchySpec {
       target match {
         case l: LocalActorRef ⇒
           l.underlying.actor match {
-            case h: Hierarchy ⇒ errors :+= target -> ErrorLog("forced", h.log)
-            case _            ⇒ errors :+= target -> ErrorLog("fetched", stateCache.get(target.path).log)
+            case h: Hierarchy ⇒ errors :+= target → ErrorLog("forced", h.log)
+            case _            ⇒ errors :+= target → ErrorLog("fetched", stateCache.get(target.path).log)
           }
           if (target != hierarchy) getErrorsUp(l.getParent)
       }
@@ -693,7 +697,7 @@ object SupervisorHierarchySpec {
       case Event(e: ErrorLog, _) ⇒
         if (e.msg.startsWith("not resumed")) stay
         else {
-          errors :+= sender() -> e
+          errors :+= sender() → e
           // don’t stop the hierarchy, that is going to happen all by itself and in the right order
           goto(Failed)
         }
@@ -718,7 +722,6 @@ object SupervisorHierarchySpec {
 
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class SupervisorHierarchySpec extends AkkaSpec(SupervisorHierarchySpec.config) with DefaultTimeout with ImplicitSender {
   import SupervisorHierarchySpec._
 
@@ -726,7 +729,7 @@ class SupervisorHierarchySpec extends AkkaSpec(SupervisorHierarchySpec.config) w
 
   "A Supervisor Hierarchy" must {
 
-    "restart manager and workers in AllForOne" in {
+    "restart manager and workers in AllForOne" taggedAs LongRunningTest in {
       val countDown = new CountDownLatch(4)
 
       val boss = system.actorOf(Props(new Supervisor(OneForOneStrategy()(List(classOf[Exception])))))
@@ -747,7 +750,7 @@ class SupervisorHierarchySpec extends AkkaSpec(SupervisorHierarchySpec.config) w
       }
     }
 
-    "send notification to supervisor when permanent failure" in {
+    "send notification to supervisor when permanent failure" taggedAs LongRunningTest in {
       val countDownMessages = new CountDownLatch(1)
       val countDownMax = new CountDownLatch(1)
       val boss = system.actorOf(Props(new Actor {
@@ -771,7 +774,7 @@ class SupervisorHierarchySpec extends AkkaSpec(SupervisorHierarchySpec.config) w
       }
     }
 
-    "resume children after Resume" in {
+    "resume children after Resume" taggedAs LongRunningTest in {
       val boss = system.actorOf(Props[Resumer], "resumer")
       boss ! "spawn"
       val middle = expectMsgType[ActorRef]
@@ -788,7 +791,7 @@ class SupervisorHierarchySpec extends AkkaSpec(SupervisorHierarchySpec.config) w
       expectMsg("pong")
     }
 
-    "suspend children while failing" in {
+    "suspend children while failing" taggedAs LongRunningTest in {
       val latch = TestLatch()
       val slowResumer = system.actorOf(Props(new Actor {
         override def supervisorStrategy = OneForOneStrategy() { case _ ⇒ Await.ready(latch, 4.seconds.dilated); SupervisorStrategy.Resume }
@@ -814,7 +817,7 @@ class SupervisorHierarchySpec extends AkkaSpec(SupervisorHierarchySpec.config) w
       expectMsg("pong")
     }
 
-    "handle failure in creation when supervision startegy returns Resume and Restart" in {
+    "handle failure in creation when supervision startegy returns Resume and Restart" taggedAs LongRunningTest in {
       val createAttempt = new AtomicInteger(0)
       val preStartCalled = new AtomicInteger(0)
       val postRestartCalled = new AtomicInteger(0)
@@ -859,12 +862,12 @@ class SupervisorHierarchySpec extends AkkaSpec(SupervisorHierarchySpec.config) w
           failResumer ! "blahonga"
           expectMsg("blahonga")
         }
-      createAttempt.get should be(6)
-      preStartCalled.get should be(1)
-      postRestartCalled.get should be(0)
+      createAttempt.get should ===(6)
+      preStartCalled.get should ===(1)
+      postRestartCalled.get should ===(0)
     }
 
-    "survive being stressed" in {
+    "survive being stressed" taggedAs LongRunningTest in {
       system.eventStream.publish(Mute(
         EventFilter[Failure](),
         EventFilter.warning("Failure"),

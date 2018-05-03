@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.io
 
 import java.net.InetSocketAddress
@@ -51,13 +52,21 @@ private[io] trait WithUdpSend {
             } catch {
               case NonFatal(e) ⇒
                 sender() ! CommandFailed(send)
-                log.debug("Failure while sending UDP datagram to remote address [{}]: {}",
+                log.debug(
+                  "Failure while sending UDP datagram to remote address [{}]: {}",
                   send.target, e)
                 retriedSend = false
                 pendingSend = null
                 pendingCommander = null
             }
           case None ⇒
+            sender() ! CommandFailed(send)
+            log.debug(
+              "Name resolution failed for remote address [{}]",
+              send.target)
+            retriedSend = false
+            pendingSend = null
+            pendingCommander = null
         }
       } else {
         doSend(registration)

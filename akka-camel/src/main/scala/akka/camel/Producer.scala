@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.camel
@@ -51,15 +51,19 @@ trait ProducerSupport extends Actor with CamelSupport {
 
   /**
    * Produces <code>msg</code> to the endpoint specified by <code>endpointUri</code>. Before the message is
-   * actually sent it is pre-processed by calling <code>receiveBeforeProduce</code>. If <code>oneway</code>
+   * actually sent it is pre-processed by calling <code>transformOutgoingMessage</code>. If <code>oneway</code>
    * is <code>true</code>, an in-only message exchange is initiated, otherwise an in-out message exchange.
    *
-   * @see Producer#produce(Any, ExchangePattern)
+   * @see Producer#produce
    */
   protected def produce: Receive = {
     case CamelProducerObjects(endpoint, processor) ⇒
       if (producerChild.isEmpty) {
-        producerChild = Some(context.actorOf(Props(new ProducerChild(endpoint, processor))))
+        val disp = camel.settings.ProducerChildDispatcher match {
+          case "" ⇒ context.props.dispatcher
+          case d  ⇒ d
+        }
+        producerChild = Some(context.actorOf(Props(new ProducerChild(endpoint, processor)).withDispatcher(disp)))
         messages = {
           for (
             child ← producerChild;
@@ -119,7 +123,7 @@ trait ProducerSupport extends Actor with CamelSupport {
      * response is received asynchronously, the <code>receiveAfterProduce</code> is called
      * asynchronously. The original sender is preserved.
      *
-     * @see CamelMessage#canonicalize(Any)
+     * @see CamelMessage#canonicalize
      * @param endpoint the endpoint
      * @param processor the processor
      * @param msg message to produce
@@ -128,7 +132,7 @@ trait ProducerSupport extends Actor with CamelSupport {
     protected def produce(endpoint: Endpoint, processor: SendProcessor, msg: Any, pattern: ExchangePattern): Unit = {
       // Need copies of sender reference here since the callback could be done
       // later by another thread.
-      val producer = self
+      val producer = context.parent
       val originalSender = sender()
       val xchg = new CamelExchangeAdapter(endpoint.createExchange(pattern))
       val cmsg = CamelMessage.canonicalize(msg)
@@ -146,6 +150,7 @@ trait ProducerSupport extends Actor with CamelSupport {
 /**
  * Mixed in by Actor implementations to produce messages to Camel endpoints.
  */
+@deprecated("Akka Camel is deprecated in favour of 'Alpakka', the Akka Streams based collection of integrations to various endpoints (including Camel).", since = "2.5.0")
 trait Producer extends ProducerSupport { this: Actor ⇒
 
   /**
@@ -170,6 +175,7 @@ private final case class FailureResult(cause: Throwable, headers: Map[String, An
  *
  *
  */
+@deprecated("Akka Camel is deprecated in favour of 'Alpakka', the Akka Streams based collection of integrations to various endpoints (including Camel).", since = "2.5.0")
 trait Oneway extends Producer { this: Actor ⇒
   override def oneway: Boolean = true
 }

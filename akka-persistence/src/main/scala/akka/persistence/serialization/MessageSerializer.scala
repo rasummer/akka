@@ -1,19 +1,21 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.persistence.serialization
 
-import scala.language.existentials
-import com.google.protobuf._
 import akka.actor.{ ActorPath, ExtendedActorSystem }
-import akka.japi.Util.immutableSeq
+import akka.persistence.AtLeastOnceDelivery._
 import akka.persistence._
-import akka.persistence.serialization.MessageFormats._
+import akka.persistence.fsm.PersistentFSM.{ PersistentFSMSnapshot, StateChangeEvent }
+import akka.persistence.serialization.{ MessageFormats ⇒ mf }
 import akka.serialization._
-import akka.persistence.AtLeastOnceDelivery.{ AtLeastOnceDeliverySnapshot ⇒ AtLeastOnceDeliverySnap }
-import akka.persistence.AtLeastOnceDelivery.UnconfirmedDelivery
+import akka.protobuf._
 import scala.collection.immutable.VectorBuilder
+import scala.concurrent.duration
+import akka.actor.Actor
+import scala.concurrent.duration.Duration
+import java.io.NotSerializableException
 
 /**
  * Marker trait for all protobuf-serializable messages in `akka.persistence`.
@@ -21,22 +23,21 @@ import scala.collection.immutable.VectorBuilder
 trait Message extends Serializable
 
 /**
- * Protobuf serializer for [[PersistentBatch]], [[PersistentRepr]] and [[Deliver]] messages.
+ * Protobuf serializer for [[akka.persistence.PersistentRepr]], [[akka.persistence.AtLeastOnceDelivery]] and [[akka.persistence.fsm.PersistentFSM.StateChangeEvent]] messages.
  */
-class MessageSerializer(val system: ExtendedActorSystem) extends Serializer {
+class MessageSerializer(val system: ExtendedActorSystem) extends BaseSerializer {
   import PersistentRepr.Undefined
 
-  val PersistentBatchClass = classOf[PersistentBatch]
+  val AtomicWriteClass = classOf[AtomicWrite]
   val PersistentReprClass = classOf[PersistentRepr]
   val PersistentImplClass = classOf[PersistentImpl]
-  val ConfirmablePersistentImplClass = classOf[ConfirmablePersistentImpl]
-  val DeliveredByTransientChannelClass = classOf[DeliveredByChannel]
-  val DeliveredByPersistentChannelClass = classOf[DeliveredByPersistentChannel]
-  val DeliverClass = classOf[Deliver]
-  val AtLeastOnceDeliverySnapshotClass = classOf[AtLeastOnceDeliverySnap]
+  val AtLeastOnceDeliverySnapshotClass = classOf[AtLeastOnceDeliverySnapshot]
+  val PersistentStateChangeEventClass = classOf[StateChangeEvent]
+  val PersistentFSMSnapshotClass = classOf[PersistentFSMSnapshot[Any]]
 
-  def identifier: Int = 7
-  def includeManifest: Boolean = true
+  private lazy val serialization = SerializationExtension(system)
+
+  override val includeManifest: Boolean = true
 
   private lazy val transportInformation: Option[Serialization.Information] = {
     val address = system.provider.getDefaultAddress
@@ -45,35 +46,32 @@ class MessageSerializer(val system: ExtendedActorSystem) extends Serializer {
   }
 
   /**
-   * Serializes [[PersistentBatch]], [[PersistentRepr]] and [[Deliver]] messages. Delegates
-   * serialization of a persistent message's payload to a matching `akka.serialization.Serializer`.
+   * Serializes persistent messages. Delegates serialization of a persistent
+   * message's payload to a matching `akka.serialization.Serializer`.
    */
   def toBinary(o: AnyRef): Array[Byte] = o match {
-    case b: PersistentBatch              ⇒ persistentMessageBatchBuilder(b).build().toByteArray
-    case p: PersistentRepr               ⇒ persistentMessageBuilder(p).build().toByteArray
-    case c: DeliveredByChannel           ⇒ deliveredMessageBuilder(c).build().toByteArray
-    case c: DeliveredByPersistentChannel ⇒ deliveredMessageBuilder(c).build().toByteArray
-    case d: Deliver                      ⇒ deliverMessageBuilder(d).build.toByteArray
-    case a: AtLeastOnceDeliverySnap      ⇒ atLeastOnceDeliverySnapshotBuilder(a).build.toByteArray
-    case _                               ⇒ throw new IllegalArgumentException(s"Can't serialize object of type ${o.getClass}")
+    case p: PersistentRepr              ⇒ persistentMessageBuilder(p).build().toByteArray
+    case a: AtomicWrite                 ⇒ atomicWriteBuilder(a).build().toByteArray
+    case a: AtLeastOnceDeliverySnapshot ⇒ atLeastOnceDeliverySnapshotBuilder(a).build.toByteArray
+    case s: StateChangeEvent            ⇒ stateChangeBuilder(s).build.toByteArray
+    case p: PersistentFSMSnapshot[Any]  ⇒ persistentFSMSnapshotBuilder(p).build.toByteArray
+    case _                              ⇒ throw new IllegalArgumentException(s"Can't serialize object of type ${o.getClass}")
   }
 
   /**
-   * Deserializes [[PersistentBatch]], [[PersistentRepr]] and [[Deliver]] messages. Delegates
-   * deserialization of a persistent message's payload to a matching `akka.serialization.Serializer`.
+   * Deserializes persistent messages. Delegates deserialization of a persistent
+   * message's payload to a matching `akka.serialization.Serializer`.
    */
   def fromBinary(bytes: Array[Byte], manifest: Option[Class[_]]): Message = manifest match {
-    case None ⇒ persistent(PersistentMessage.parseFrom(bytes))
+    case None ⇒ persistent(mf.PersistentMessage.parseFrom(bytes))
     case Some(c) ⇒ c match {
-      case PersistentImplClass               ⇒ persistent(PersistentMessage.parseFrom(bytes))
-      case ConfirmablePersistentImplClass    ⇒ persistent(PersistentMessage.parseFrom(bytes))
-      case PersistentReprClass               ⇒ persistent(PersistentMessage.parseFrom(bytes))
-      case PersistentBatchClass              ⇒ persistentBatch(PersistentMessageBatch.parseFrom(bytes))
-      case DeliveredByTransientChannelClass  ⇒ delivered(DeliveredMessage.parseFrom(bytes))
-      case DeliveredByPersistentChannelClass ⇒ delivered(DeliveredMessage.parseFrom(bytes))
-      case DeliverClass                      ⇒ deliver(DeliverMessage.parseFrom(bytes))
-      case AtLeastOnceDeliverySnapshotClass  ⇒ atLeastOnceDeliverySnapshot(AtLeastOnceDeliverySnapshot.parseFrom(bytes))
-      case _                                 ⇒ throw new IllegalArgumentException(s"Can't deserialize object of type ${c}")
+      case PersistentImplClass              ⇒ persistent(mf.PersistentMessage.parseFrom(bytes))
+      case PersistentReprClass              ⇒ persistent(mf.PersistentMessage.parseFrom(bytes))
+      case AtomicWriteClass                 ⇒ atomicWrite(mf.AtomicWrite.parseFrom(bytes))
+      case AtLeastOnceDeliverySnapshotClass ⇒ atLeastOnceDeliverySnapshot(mf.AtLeastOnceDeliverySnapshot.parseFrom(bytes))
+      case PersistentStateChangeEventClass  ⇒ stateChange(mf.PersistentStateChangeEvent.parseFrom(bytes))
+      case PersistentFSMSnapshotClass       ⇒ persistentFSMSnapshot(mf.PersistentFSMSnapshot.parseFrom(bytes))
+      case _                                ⇒ throw new NotSerializableException(s"Can't deserialize object of type ${c}")
     }
   }
 
@@ -81,19 +79,12 @@ class MessageSerializer(val system: ExtendedActorSystem) extends Serializer {
   // toBinary helpers
   //
 
-  private def deliverMessageBuilder(deliver: Deliver) = {
-    val builder = DeliverMessage.newBuilder
-    builder.setPersistent(persistentMessageBuilder(deliver.persistent.asInstanceOf[PersistentRepr]))
-    builder.setDestination(deliver.destination.toString)
-    builder
-  }
-
-  def atLeastOnceDeliverySnapshotBuilder(snap: AtLeastOnceDeliverySnap): AtLeastOnceDeliverySnapshot.Builder = {
-    val builder = AtLeastOnceDeliverySnapshot.newBuilder
+  def atLeastOnceDeliverySnapshotBuilder(snap: AtLeastOnceDeliverySnapshot): mf.AtLeastOnceDeliverySnapshot.Builder = {
+    val builder = mf.AtLeastOnceDeliverySnapshot.newBuilder
     builder.setCurrentDeliveryId(snap.currentDeliveryId)
     snap.unconfirmedDeliveries.foreach { unconfirmed ⇒
       val unconfirmedBuilder =
-        AtLeastOnceDeliverySnapshot.UnconfirmedDelivery.newBuilder.
+        mf.AtLeastOnceDeliverySnapshot.UnconfirmedDelivery.newBuilder.
           setDeliveryId(unconfirmed.deliveryId).
           setDestination(unconfirmed.destination.toString).
           setPayload(persistentPayloadBuilder(unconfirmed.message.asInstanceOf[AnyRef]))
@@ -102,7 +93,25 @@ class MessageSerializer(val system: ExtendedActorSystem) extends Serializer {
     builder
   }
 
-  def atLeastOnceDeliverySnapshot(atLeastOnceDeliverySnapshot: AtLeastOnceDeliverySnapshot): AtLeastOnceDeliverySnap = {
+  private[persistence] def stateChangeBuilder(stateChange: StateChangeEvent): mf.PersistentStateChangeEvent.Builder = {
+    val builder = mf.PersistentStateChangeEvent.newBuilder.setStateIdentifier(stateChange.stateIdentifier)
+    stateChange.timeout match {
+      case None          ⇒ builder
+      case Some(timeout) ⇒ builder.setTimeoutNanos(timeout.toNanos)
+    }
+  }
+
+  private[persistence] def persistentFSMSnapshotBuilder(persistentFSMSnapshot: PersistentFSMSnapshot[Any]): mf.PersistentFSMSnapshot.Builder = {
+    val builder = mf.PersistentFSMSnapshot.newBuilder
+      .setStateIdentifier(persistentFSMSnapshot.stateIdentifier)
+      .setData(persistentPayloadBuilder(persistentFSMSnapshot.data.asInstanceOf[AnyRef]))
+    persistentFSMSnapshot.timeout match {
+      case None          ⇒ builder
+      case Some(timeout) ⇒ builder.setTimeoutNanos(timeout.toNanos)
+    }
+  }
+
+  def atLeastOnceDeliverySnapshot(atLeastOnceDeliverySnapshot: mf.AtLeastOnceDeliverySnapshot): AtLeastOnceDeliverySnapshot = {
     import scala.collection.JavaConverters._
     val unconfirmedDeliveries = new VectorBuilder[UnconfirmedDelivery]()
     atLeastOnceDeliverySnapshot.getUnconfirmedDeliveriesList().iterator().asScala foreach { next ⇒
@@ -110,68 +119,66 @@ class MessageSerializer(val system: ExtendedActorSystem) extends Serializer {
         payload(next.getPayload))
     }
 
-    AtLeastOnceDeliverySnap(
+    AtLeastOnceDeliverySnapshot(
       atLeastOnceDeliverySnapshot.getCurrentDeliveryId,
       unconfirmedDeliveries.result())
   }
 
-  private def persistentMessageBatchBuilder(persistentBatch: PersistentBatch) = {
-    val builder = PersistentMessageBatch.newBuilder
-    persistentBatch.batch.
-      filter(_.isInstanceOf[PersistentRepr]).
-      foreach(p ⇒ builder.addBatch(persistentMessageBuilder(p.asInstanceOf[PersistentRepr])))
+  def stateChange(persistentStateChange: mf.PersistentStateChangeEvent): StateChangeEvent = {
+    StateChangeEvent(
+      persistentStateChange.getStateIdentifier,
+      // timeout field is deprecated, left for backward compatibility. timeoutNanos is used instead.
+      if (persistentStateChange.hasTimeoutNanos) Some(Duration.fromNanos(persistentStateChange.getTimeoutNanos))
+      else if (persistentStateChange.hasTimeout) Some(Duration(persistentStateChange.getTimeout).asInstanceOf[duration.FiniteDuration])
+      else None)
+  }
+
+  def persistentFSMSnapshot(persistentFSMSnapshot: mf.PersistentFSMSnapshot): PersistentFSMSnapshot[Any] = {
+    PersistentFSMSnapshot(
+      persistentFSMSnapshot.getStateIdentifier,
+      payload(persistentFSMSnapshot.getData),
+      if (persistentFSMSnapshot.hasTimeoutNanos) Some(Duration.fromNanos(persistentFSMSnapshot.getTimeoutNanos)) else None)
+  }
+
+  private def atomicWriteBuilder(a: AtomicWrite) = {
+    val builder = mf.AtomicWrite.newBuilder
+    a.payload.foreach { p ⇒
+      builder.addPayload(persistentMessageBuilder(p))
+    }
     builder
   }
 
   private def persistentMessageBuilder(persistent: PersistentRepr) = {
-    val builder = PersistentMessage.newBuilder
+    val builder = mf.PersistentMessage.newBuilder
 
     if (persistent.persistenceId != Undefined) builder.setPersistenceId(persistent.persistenceId)
-    if (persistent.confirmMessage != null) builder.setConfirmMessage(deliveredMessageBuilder(persistent.confirmMessage))
-    if (persistent.confirmTarget != null) builder.setConfirmTarget(Serialization.serializedActorPath(persistent.confirmTarget))
-    if (persistent.sender != null) builder.setSender(Serialization.serializedActorPath(persistent.sender))
-
-    persistent.confirms.foreach(builder.addConfirms)
+    if (persistent.sender != Actor.noSender) builder.setSender(Serialization.serializedActorPath(persistent.sender))
+    if (persistent.manifest != PersistentRepr.Undefined) builder.setManifest(persistent.manifest)
 
     builder.setPayload(persistentPayloadBuilder(persistent.payload.asInstanceOf[AnyRef]))
     builder.setSequenceNr(persistent.sequenceNr)
-    builder.setDeleted(persistent.deleted)
-    builder.setRedeliveries(persistent.redeliveries)
-    builder.setConfirmable(persistent.confirmable)
+    // deleted is not used in new records from 2.4
+    if (persistent.writerUuid != Undefined) builder.setWriterUuid(persistent.writerUuid)
     builder
   }
 
   private def persistentPayloadBuilder(payload: AnyRef) = {
     def payloadBuilder() = {
-      val serializer = SerializationExtension(system).findSerializerFor(payload)
-      val builder = PersistentPayload.newBuilder()
+      val serializer = serialization.findSerializerFor(payload)
+      val builder = mf.PersistentPayload.newBuilder()
 
-      if (serializer.includeManifest) builder.setPayloadManifest(ByteString.copyFromUtf8(payload.getClass.getName))
+      val ms = Serializers.manifestFor(serializer, payload)
+      if (ms.nonEmpty) builder.setPayloadManifest(ByteString.copyFromUtf8(ms))
 
       builder.setPayload(ByteString.copyFrom(serializer.toBinary(payload)))
       builder.setSerializerId(serializer.identifier)
       builder
     }
 
-    // serialize actor references with full address information (defaultAddress) 
+    // serialize actor references with full address information (defaultAddress)
     transportInformation match {
       case Some(ti) ⇒ Serialization.currentTransportInformation.withValue(ti) { payloadBuilder() }
       case None     ⇒ payloadBuilder()
-    }
-  }
-
-  private def deliveredMessageBuilder(delivered: Delivered) = {
-    val builder = DeliveredMessage.newBuilder
-
-    if (delivered.channel != null) builder.setChannel(Serialization.serializedActorPath(delivered.channel))
-
-    builder.setChannelId(delivered.channelId)
-    builder.setPersistentSequenceNr(delivered.persistentSequenceNr)
-    builder.setDeliverySequenceNr(delivered.deliverySequenceNr)
-
-    delivered match {
-      case c: DeliveredByChannel ⇒ builder.setPersistenceId(c.persistenceId)
-      case _                     ⇒ builder
     }
   }
 
@@ -179,55 +186,30 @@ class MessageSerializer(val system: ExtendedActorSystem) extends Serializer {
   // fromBinary helpers
   //
 
-  private def deliver(deliverMessage: DeliverMessage): Deliver = {
-    Deliver(
-      persistent(deliverMessage.getPersistent),
-      ActorPath.fromString(deliverMessage.getDestination))
-  }
-
-  private def persistentBatch(persistentMessageBatch: PersistentMessageBatch): PersistentBatch =
-    PersistentBatch(immutableSeq(persistentMessageBatch.getBatchList).map(persistent))
-
-  private def persistent(persistentMessage: PersistentMessage): PersistentRepr = {
+  private def persistent(persistentMessage: mf.PersistentMessage): PersistentRepr = {
     PersistentRepr(
       payload(persistentMessage.getPayload),
       persistentMessage.getSequenceNr,
       if (persistentMessage.hasPersistenceId) persistentMessage.getPersistenceId else Undefined,
-      persistentMessage.getDeleted,
-      persistentMessage.getRedeliveries,
-      immutableSeq(persistentMessage.getConfirmsList),
-      persistentMessage.getConfirmable,
-      if (persistentMessage.hasConfirmMessage) delivered(persistentMessage.getConfirmMessage) else null,
-      if (persistentMessage.hasConfirmTarget) system.provider.resolveActorRef(persistentMessage.getConfirmTarget) else null,
-      if (persistentMessage.hasSender) system.provider.resolveActorRef(persistentMessage.getSender) else null)
+      if (persistentMessage.hasManifest) persistentMessage.getManifest else Undefined,
+      if (persistentMessage.hasDeleted) persistentMessage.getDeleted else false,
+      if (persistentMessage.hasSender) system.provider.resolveActorRef(persistentMessage.getSender) else Actor.noSender,
+      if (persistentMessage.hasWriterUuid) persistentMessage.getWriterUuid else Undefined)
   }
 
-  private def payload(persistentPayload: PersistentPayload): Any = {
-    val payloadClass = if (persistentPayload.hasPayloadManifest)
-      Some(system.dynamicAccess.getClassFor[AnyRef](persistentPayload.getPayloadManifest.toStringUtf8).get) else None
+  private def atomicWrite(atomicWrite: mf.AtomicWrite): AtomicWrite = {
+    import scala.collection.JavaConverters._
+    AtomicWrite(atomicWrite.getPayloadList.asScala.map(persistent)(collection.breakOut))
+  }
 
-    SerializationExtension(system).deserialize(
+  private def payload(persistentPayload: mf.PersistentPayload): Any = {
+    val manifest = if (persistentPayload.hasPayloadManifest)
+      persistentPayload.getPayloadManifest.toStringUtf8 else ""
+
+    serialization.deserialize(
       persistentPayload.getPayload.toByteArray,
       persistentPayload.getSerializerId,
-      payloadClass).get
+      manifest).get
   }
 
-  private def delivered(deliveredMessage: DeliveredMessage): Delivered = {
-    val channel = if (deliveredMessage.hasChannel) system.provider.resolveActorRef(deliveredMessage.getChannel) else null
-
-    if (deliveredMessage.hasPersistenceId) {
-      DeliveredByChannel(
-        deliveredMessage.getPersistenceId,
-        deliveredMessage.getChannelId,
-        deliveredMessage.getPersistentSequenceNr,
-        deliveredMessage.getDeliverySequenceNr,
-        channel)
-    } else {
-      DeliveredByPersistentChannel(
-        deliveredMessage.getChannelId,
-        deliveredMessage.getPersistentSequenceNr,
-        deliveredMessage.getDeliverySequenceNr,
-        channel)
-    }
-  }
 }

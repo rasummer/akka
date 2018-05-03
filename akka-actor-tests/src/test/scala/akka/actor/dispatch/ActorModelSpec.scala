@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor.dispatch
 
 import language.postfixOps
@@ -9,9 +10,7 @@ import java.rmi.RemoteException
 import java.util.concurrent.{ TimeUnit, CountDownLatch, ConcurrentHashMap }
 import java.util.concurrent.atomic.{ AtomicLong, AtomicInteger }
 
-import org.junit.runner.RunWith
 import org.scalatest.Assertions._
-import org.scalatest.junit.JUnitRunner
 
 import com.typesafe.config.Config
 
@@ -21,10 +20,9 @@ import akka.dispatch._
 import akka.event.Logging.Error
 import akka.pattern.ask
 import akka.testkit._
-import akka.util.Helpers.ConfigOps
 import akka.util.Switch
 import scala.concurrent.duration._
-import scala.concurrent.{ Await, Future, Promise }
+import scala.concurrent.{ Await, Future }
 import scala.annotation.tailrec
 
 object ActorModelSpec {
@@ -118,11 +116,16 @@ object ActorModelSpec {
     val stops = new AtomicLong(0)
 
     def getStats(actorRef: ActorRef) = {
-      val is = new InterceptorStats
-      stats.putIfAbsent(actorRef, is) match {
-        case null  ⇒ is
-        case other ⇒ other
+      stats.get(actorRef) match {
+        case null ⇒
+          val is = new InterceptorStats
+          stats.putIfAbsent(actorRef, is) match {
+            case null  ⇒ is
+            case other ⇒ other
+          }
+        case existing ⇒ existing
       }
+
     }
 
     protected[akka] abstract override def suspend(actor: ActorCell) {
@@ -184,13 +187,13 @@ object ActorModelSpec {
     dispatcher.asInstanceOf[MessageDispatcherInterceptor].getStats(actorRef)
 
   def assertRefDefaultZero(actorRef: ActorRef, dispatcher: MessageDispatcher = null)(
-    suspensions: Long = 0,
-    resumes: Long = 0,
-    registers: Long = 0,
-    unregisters: Long = 0,
-    msgsReceived: Long = 0,
+    suspensions:   Long = 0,
+    resumes:       Long = 0,
+    registers:     Long = 0,
+    unregisters:   Long = 0,
+    msgsReceived:  Long = 0,
     msgsProcessed: Long = 0,
-    restarts: Long = 0)(implicit system: ActorSystem) {
+    restarts:      Long = 0)(implicit system: ActorSystem) {
     assertRef(actorRef, dispatcher)(
       suspensions,
       resumes,
@@ -202,13 +205,13 @@ object ActorModelSpec {
   }
 
   def assertRef(actorRef: ActorRef, dispatcher: MessageDispatcher = null)(
-    suspensions: Long = statsFor(actorRef, dispatcher).suspensions.get(),
-    resumes: Long = statsFor(actorRef, dispatcher).resumes.get(),
-    registers: Long = statsFor(actorRef, dispatcher).registers.get(),
-    unregisters: Long = statsFor(actorRef, dispatcher).unregisters.get(),
-    msgsReceived: Long = statsFor(actorRef, dispatcher).msgsReceived.get(),
+    suspensions:   Long = statsFor(actorRef, dispatcher).suspensions.get(),
+    resumes:       Long = statsFor(actorRef, dispatcher).resumes.get(),
+    registers:     Long = statsFor(actorRef, dispatcher).registers.get(),
+    unregisters:   Long = statsFor(actorRef, dispatcher).unregisters.get(),
+    msgsReceived:  Long = statsFor(actorRef, dispatcher).msgsReceived.get(),
     msgsProcessed: Long = statsFor(actorRef, dispatcher).msgsProcessed.get(),
-    restarts: Long = statsFor(actorRef, dispatcher).restarts.get())(implicit system: ActorSystem) {
+    restarts:      Long = statsFor(actorRef, dispatcher).restarts.get())(implicit system: ActorSystem) {
     val stats = statsFor(actorRef, Option(dispatcher).getOrElse(actorRef.asInstanceOf[ActorRefWithCell].underlying.asInstanceOf[ActorCell].dispatcher))
     val deadline = System.currentTimeMillis + 1000
     try {
@@ -221,7 +224,8 @@ object ActorModelSpec {
       await(deadline)(stats.restarts.get() == restarts)
     } catch {
       case e: Throwable ⇒
-        system.eventStream.publish(Error(e,
+        system.eventStream.publish(Error(
+          e,
           Option(dispatcher).toString,
           (Option(dispatcher) getOrElse this).getClass,
           "actual: " + stats + ", required: InterceptorStats(susp=" + suspensions +
@@ -398,7 +402,7 @@ abstract class ActorModelSpec(config: String) extends AkkaSpec(config) with Defa
                     def compare(l: AnyRef, r: AnyRef) = (l, r) match { case (ll: ActorCell, rr: ActorCell) ⇒ ll.self.path compareTo rr.self.path }
                   } foreach {
                     case cell: ActorCell ⇒
-                      System.err.println(" - " + cell.self.path + " " + cell.isTerminated + " " + cell.mailbox.status + " "
+                      System.err.println(" - " + cell.self.path + " " + cell.isTerminated + " " + cell.mailbox.currentStatus + " "
                         + cell.mailbox.numberOfMessages + " " + cell.mailbox.systemDrain(SystemMessageList.LNil).size)
                   }
 
@@ -416,7 +420,7 @@ abstract class ActorModelSpec(config: String) extends AkkaSpec(config) with Defa
         }
       }
       for (run ← 1 to 3) {
-        flood(50000)
+        flood(10000)
         assertDispatcher(dispatcher)(stops = run)
       }
     }
@@ -532,7 +536,8 @@ object DispatcherModelSpec {
     import akka.util.Helpers.ConfigOps
 
     private val instance: MessageDispatcher =
-      new Dispatcher(this,
+      new Dispatcher(
+        this,
         config.getString("id"),
         config.getInt("throughput"),
         config.getNanosDuration("throughput-deadline-time"),
@@ -543,7 +548,6 @@ object DispatcherModelSpec {
   }
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class DispatcherModelSpec extends ActorModelSpec(DispatcherModelSpec.config) {
   import ActorModelSpec._
 
@@ -606,7 +610,8 @@ object BalancingDispatcherModelSpec {
     import akka.util.Helpers.ConfigOps
 
     override protected def create(mailboxType: MailboxType): BalancingDispatcher =
-      new BalancingDispatcher(this,
+      new BalancingDispatcher(
+        this,
         config.getString("id"),
         config.getInt("throughput"),
         config.getNanosDuration("throughput-deadline-time"),
@@ -617,7 +622,6 @@ object BalancingDispatcherModelSpec {
   }
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class BalancingDispatcherModelSpec extends ActorModelSpec(BalancingDispatcherModelSpec.config) {
   import ActorModelSpec._
 

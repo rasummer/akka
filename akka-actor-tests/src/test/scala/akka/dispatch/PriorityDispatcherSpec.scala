@@ -1,13 +1,14 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.dispatch
 
 import language.postfixOps
 
-import org.junit.runner.RunWith
-import org.scalatest.junit.JUnitRunner
 import com.typesafe.config.Config
 
 import akka.actor.{ Props, ActorSystem, Actor }
-import akka.pattern.ask
 import akka.testkit.{ DefaultTimeout, AkkaSpec }
 import scala.concurrent.duration._
 
@@ -33,7 +34,6 @@ object PriorityDispatcherSpec {
 
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class PriorityDispatcherSpec extends AkkaSpec(PriorityDispatcherSpec.config) with DefaultTimeout {
 
   "A PriorityDispatcher" must {
@@ -74,7 +74,7 @@ class PriorityDispatcherSpec extends AkkaSpec(PriorityDispatcherSpec.config) wit
 
     }))
 
-    expectMsgType[List[_]] should be(msgs)
+    expectMsgType[List[Int]] should ===(msgs)
   }
 
 }

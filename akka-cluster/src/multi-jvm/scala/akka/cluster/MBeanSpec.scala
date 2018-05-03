@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import language.postfixOps
@@ -22,6 +23,7 @@ object MBeanMultiJvmSpec extends MultiNodeConfig {
 
   commonConfig(debugConfig(on = false).withFallback(ConfigFactory.parseString("""
     akka.cluster.jmx.enabled = on
+    akka.cluster.roles = [testNode]
     """)).withFallback(MultiNodeClusterSpec.clusterConfig))
 
 }
@@ -44,35 +46,35 @@ abstract class MBeanSpec
   "Cluster MBean" must {
     "expose attributes" taggedAs LongRunningTest in {
       val info = mbeanServer.getMBeanInfo(mbeanName)
-      info.getAttributes.map(_.getName).toSet should be(Set(
+      info.getAttributes.map(_.getName).toSet should ===(Set(
         "ClusterStatus", "Members", "Unreachable", "MemberStatus", "Leader", "Singleton", "Available"))
       enterBarrier("after-1")
     }
 
     "expose operations" taggedAs LongRunningTest in {
       val info = mbeanServer.getMBeanInfo(mbeanName)
-      info.getOperations.map(_.getName).toSet should be(Set(
+      info.getOperations.map(_.getName).toSet should ===(Set(
         "join", "leave", "down"))
       enterBarrier("after-2")
     }
 
     "change attributes after startup" taggedAs LongRunningTest in {
       runOn(first) {
-        mbeanServer.getAttribute(mbeanName, "Available").asInstanceOf[Boolean] should be(false)
-        mbeanServer.getAttribute(mbeanName, "Singleton").asInstanceOf[Boolean] should be(false)
-        mbeanServer.getAttribute(mbeanName, "Leader") should be("")
-        mbeanServer.getAttribute(mbeanName, "Members") should be("")
-        mbeanServer.getAttribute(mbeanName, "Unreachable") should be("")
-        mbeanServer.getAttribute(mbeanName, "MemberStatus") should be("Removed")
+        mbeanServer.getAttribute(mbeanName, "Available").asInstanceOf[Boolean] should ===(false)
+        mbeanServer.getAttribute(mbeanName, "Singleton").asInstanceOf[Boolean] should ===(false)
+        mbeanServer.getAttribute(mbeanName, "Leader") should ===("")
+        mbeanServer.getAttribute(mbeanName, "Members") should ===("")
+        mbeanServer.getAttribute(mbeanName, "Unreachable") should ===("")
+        mbeanServer.getAttribute(mbeanName, "MemberStatus") should ===("Removed")
       }
       awaitClusterUp(first)
       runOn(first) {
-        awaitAssert(mbeanServer.getAttribute(mbeanName, "MemberStatus") should be("Up"))
-        awaitAssert(mbeanServer.getAttribute(mbeanName, "Leader") should be(address(first).toString))
-        mbeanServer.getAttribute(mbeanName, "Singleton").asInstanceOf[Boolean] should be(true)
-        mbeanServer.getAttribute(mbeanName, "Members") should be(address(first).toString)
-        mbeanServer.getAttribute(mbeanName, "Unreachable") should be("")
-        mbeanServer.getAttribute(mbeanName, "Available").asInstanceOf[Boolean] should be(true)
+        awaitAssert(mbeanServer.getAttribute(mbeanName, "MemberStatus") should ===("Up"))
+        awaitAssert(mbeanServer.getAttribute(mbeanName, "Leader") should ===(address(first).toString))
+        mbeanServer.getAttribute(mbeanName, "Singleton").asInstanceOf[Boolean] should ===(true)
+        mbeanServer.getAttribute(mbeanName, "Members") should ===(address(first).toString)
+        mbeanServer.getAttribute(mbeanName, "Unreachable") should ===("")
+        mbeanServer.getAttribute(mbeanName, "Available").asInstanceOf[Boolean] should ===(true)
       }
       enterBarrier("after-3")
     }
@@ -85,12 +87,12 @@ abstract class MBeanSpec
 
       awaitMembersUp(4)
       assertMembers(clusterView.members, roles.map(address(_)): _*)
-      awaitAssert(mbeanServer.getAttribute(mbeanName, "MemberStatus") should be("Up"))
+      awaitAssert(mbeanServer.getAttribute(mbeanName, "MemberStatus") should ===("Up"))
       val expectedMembers = roles.sorted.map(address(_)).mkString(",")
-      awaitAssert(mbeanServer.getAttribute(mbeanName, "Members") should be(expectedMembers))
+      awaitAssert(mbeanServer.getAttribute(mbeanName, "Members") should ===(expectedMembers))
       val expectedLeader = address(roleOfLeader())
-      awaitAssert(mbeanServer.getAttribute(mbeanName, "Leader") should be(expectedLeader.toString))
-      mbeanServer.getAttribute(mbeanName, "Singleton").asInstanceOf[Boolean] should be(false)
+      awaitAssert(mbeanServer.getAttribute(mbeanName, "Leader") should ===(expectedLeader.toString))
+      mbeanServer.getAttribute(mbeanName, "Singleton").asInstanceOf[Boolean] should ===(false)
 
       enterBarrier("after-4")
     }
@@ -104,9 +106,9 @@ abstract class MBeanSpec
       enterBarrier("fourth-shutdown")
 
       runOn(first, second, third) {
-        awaitAssert(mbeanServer.getAttribute(mbeanName, "Unreachable") should be(fourthAddress.toString))
+        awaitAssert(mbeanServer.getAttribute(mbeanName, "Unreachable") should ===(fourthAddress.toString))
         val expectedMembers = Seq(first, second, third, fourth).sorted.map(address(_)).mkString(",")
-        awaitAssert(mbeanServer.getAttribute(mbeanName, "Members") should be(expectedMembers))
+        awaitAssert(mbeanServer.getAttribute(mbeanName, "Members") should ===(expectedMembers))
       }
       enterBarrier("fourth-unreachable")
 
@@ -115,25 +117,41 @@ abstract class MBeanSpec
         val unreachableObservedBy = Vector(first, second, third).sorted.map(address(_))
         val expectedJson =
           s"""{
-             |  "self-address": "${address(first)}",
              |  "members": [
              |    {
              |      "address": "${sortedNodes(0)}",
+             |      "roles": [
+             |        "dc-default",
+             |        "testNode"
+             |      ],
              |      "status": "Up"
              |    },
              |    {
              |      "address": "${sortedNodes(1)}",
+             |      "roles": [
+             |        "dc-default",
+             |        "testNode"
+             |      ],
              |      "status": "Up"
              |    },
              |    {
              |      "address": "${sortedNodes(2)}",
+             |      "roles": [
+             |        "dc-default",
+             |        "testNode"
+             |      ],
              |      "status": "Up"
              |    },
              |    {
              |      "address": "${sortedNodes(3)}",
+             |      "roles": [
+             |        "dc-default",
+             |        "testNode"
+             |      ],
              |      "status": "Up"
              |    }
              |  ],
+             |  "self-address": "${address(first)}",
              |  "unreachable": [
              |    {
              |      "node": "${address(fourth)}",
@@ -149,7 +167,7 @@ abstract class MBeanSpec
 
         // awaitAssert to make sure that all nodes detects unreachable
         within(15.seconds) {
-          awaitAssert(mbeanServer.getAttribute(mbeanName, "ClusterStatus") should be(expectedJson))
+          awaitAssert(mbeanServer.getAttribute(mbeanName, "ClusterStatus") should ===(expectedJson))
         }
       }
 
@@ -169,7 +187,7 @@ abstract class MBeanSpec
       runOn(first, second, third) {
         awaitMembersUp(3, canNotBePartOfMemberRing = Set(fourthAddress))
         assertMembers(clusterView.members, first, second, third)
-        awaitAssert(mbeanServer.getAttribute(mbeanName, "Unreachable") should be(""))
+        awaitAssert(mbeanServer.getAttribute(mbeanName, "Unreachable") should ===(""))
       }
 
       enterBarrier("after-6")
@@ -184,7 +202,7 @@ abstract class MBeanSpec
         awaitMembersUp(2)
         assertMembers(clusterView.members, first, second)
         val expectedMembers = Seq(first, second).sorted.map(address(_)).mkString(",")
-        awaitAssert(mbeanServer.getAttribute(mbeanName, "Members") should be(expectedMembers))
+        awaitAssert(mbeanServer.getAttribute(mbeanName, "Members") should ===(expectedMembers))
       }
       runOn(third) {
         awaitCond(cluster.isTerminated)

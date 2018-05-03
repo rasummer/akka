@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
 import language.postfixOps
@@ -9,12 +10,9 @@ import akka.testkit._
 import akka.testkit.DefaultTimeout
 import akka.testkit.TestEvent._
 import akka.dispatch.BoundedDequeBasedMailbox
-import akka.pattern.ask
-import scala.concurrent.Await
 import scala.concurrent.duration._
 import akka.actor.ActorSystem.Settings
 import com.typesafe.config.{ Config, ConfigFactory }
-import org.scalatest.Assertions.intercept
 import org.scalatest.BeforeAndAfterEach
 
 object ActorWithBoundedStashSpec {
@@ -26,12 +24,12 @@ object ActorWithBoundedStashSpec {
         sender() ! "ok"
 
       case "world" ⇒
-        context.become(afterWorldBehaviour)
+        context.become(afterWorldBehavior)
         unstashAll()
 
     }
 
-    def afterWorldBehaviour: Receive = {
+    def afterWorldBehavior: Receive = {
       case _ ⇒ stash()
     }
   }
@@ -84,7 +82,6 @@ object ActorWithBoundedStashSpec {
     """)
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class ActorWithBoundedStashSpec extends AkkaSpec(ActorWithBoundedStashSpec.testConf) with BeforeAndAfterEach with DefaultTimeout with ImplicitSender {
   import ActorWithBoundedStashSpec._
 

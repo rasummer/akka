@@ -1,15 +1,14 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import java.util.concurrent.ConcurrentHashMap
 import scala.concurrent.Await
-import scala.concurrent.duration._
 import akka.actor.{ Props, Actor }
 import akka.testkit.{ TestLatch, ImplicitSender, DefaultTimeout, AkkaSpec }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class SmallestMailboxSpec extends AkkaSpec("akka.actor.serialize-messages = off")
   with DefaultTimeout with ImplicitSender {
 

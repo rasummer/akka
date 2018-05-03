@@ -1,10 +1,11 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.serialization
 
 import scala.collection.immutable
-import com.google.protobuf.ByteString
+import akka.protobuf.ByteString
 import akka.actor.ActorSelectionMessage
 import akka.actor.ExtendedActorSystem
 import akka.actor.SelectChildName
@@ -12,12 +13,11 @@ import akka.actor.SelectChildPattern
 import akka.actor.SelectParent
 import akka.actor.SelectionPathElement
 import akka.remote.ContainerFormats
-import akka.serialization.SerializationExtension
-import akka.serialization.Serializer
+import akka.serialization.{ BaseSerializer, SerializationExtension, Serializers }
 
-class MessageContainerSerializer(val system: ExtendedActorSystem) extends Serializer {
+class MessageContainerSerializer(val system: ExtendedActorSystem) extends BaseSerializer {
 
-  def identifier: Int = 6
+  private lazy val serialization = SerializationExtension(system)
 
   def includeManifest: Boolean = false
 
@@ -31,14 +31,14 @@ class MessageContainerSerializer(val system: ExtendedActorSystem) extends Serial
   private def serializeSelection(sel: ActorSelectionMessage): Array[Byte] = {
     val builder = ContainerFormats.SelectionEnvelope.newBuilder()
     val message = sel.msg.asInstanceOf[AnyRef]
-    val serializer = SerializationExtension(system).findSerializerFor(message)
+    val serializer = serialization.findSerializerFor(message)
     builder.
       setEnclosedMessage(ByteString.copyFrom(serializer.toBinary(message))).
       setSerializerId(serializer.identifier).
       setWildcardFanOut(sel.wildcardFanOut)
 
-    if (serializer.includeManifest)
-      builder.setMessageManifest(ByteString.copyFromUtf8(message.getClass.getName))
+    val ms = Serializers.manifestFor(serializer, message)
+    if (ms.nonEmpty) builder.setMessageManifest(ByteString.copyFromUtf8(ms))
 
     sel.elements.foreach {
       case SelectChildName(name) ⇒
@@ -60,11 +60,11 @@ class MessageContainerSerializer(val system: ExtendedActorSystem) extends Serial
 
   def fromBinary(bytes: Array[Byte], manifest: Option[Class[_]]): AnyRef = {
     val selectionEnvelope = ContainerFormats.SelectionEnvelope.parseFrom(bytes)
-    val msg = SerializationExtension(system).deserialize(
+    val manifest = if (selectionEnvelope.hasMessageManifest) selectionEnvelope.getMessageManifest.toStringUtf8 else ""
+    val msg = serialization.deserialize(
       selectionEnvelope.getEnclosedMessage.toByteArray,
       selectionEnvelope.getSerializerId,
-      if (selectionEnvelope.hasMessageManifest)
-        Some(system.dynamicAccess.getClassFor[AnyRef](selectionEnvelope.getMessageManifest.toStringUtf8).get) else None).get
+      manifest).get
 
     import scala.collection.JavaConverters._
     val elements: immutable.Iterable[SelectionPathElement] = selectionEnvelope.getPatternList.asScala.map { x ⇒

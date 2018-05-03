@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.contrib.pattern
 
 import akka.actor.Actor
@@ -9,6 +10,7 @@ import scala.annotation.tailrec
 /**
  * The aggregator is to be mixed into an actor for the aggregator behavior.
  */
+@deprecated("Feel free to copy", "2.5.0")
 trait Aggregator {
   this: Actor ⇒
 
@@ -80,6 +82,7 @@ trait Aggregator {
 /**
  * Provides the utility methods and constructors to the WorkList class.
  */
+@deprecated("Feel free to copy", "2.5.0")
 object WorkList {
 
   def empty[T] = new WorkList[T]
@@ -88,7 +91,6 @@ object WorkList {
    * Singly linked list entry implementation for WorkList.
    * @param ref The item reference, None for head entry
    * @param permanent If the entry is to be kept after processing
-   * @tparam T The type of the item
    */
   class Entry[T](val ref: Option[T], val permanent: Boolean) {
     var next: Entry[T] = null
@@ -101,8 +103,8 @@ object WorkList {
  * The list is not thread safe! However it is expected to be reentrant. This means a processing function can add/remove
  * entries from the list while processing. Most important, a processing function can remove its own entry from the list.
  * The first remove must return true and any subsequent removes must return false.
- * @tparam T The type of the item
  */
+@deprecated("Feel free to copy", "2.5.0")
 class WorkList[T] {
 
   import WorkList._

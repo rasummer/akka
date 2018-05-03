@@ -1,13 +1,13 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
 import language.postfixOps
 
 import akka.testkit.{ filterEvents, EventFilter }
 import scala.concurrent.Await
-import akka.dispatch.{ PinnedDispatcher, Dispatchers }
 import java.util.concurrent.{ TimeUnit, CountDownLatch }
 import akka.testkit.AkkaSpec
 import akka.testkit.DefaultTimeout
@@ -27,7 +27,6 @@ object SupervisorMiscSpec {
     """
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class SupervisorMiscSpec extends AkkaSpec(SupervisorMiscSpec.config) with DefaultTimeout {
 
   "A Supervisor" must {
@@ -60,10 +59,10 @@ class SupervisorMiscSpec extends AkkaSpec(SupervisorMiscSpec.config) with Defaul
 
         countDownLatch.await(10, TimeUnit.SECONDS)
 
-        Seq("actor1" -> actor1, "actor2" -> actor2, "actor3" -> actor3, "actor4" -> actor4) map {
+        Seq("actor1" → actor1, "actor2" → actor2, "actor3" → actor3, "actor4" → actor4) map {
           case (id, ref) ⇒ (id, ref ? "status")
         } foreach {
-          case (id, f) ⇒ (id, Await.result(f, timeout.duration)) should be((id, "OK"))
+          case (id, f) ⇒ (id, Await.result(f, timeout.duration)) should ===((id, "OK"))
         }
       }
     }
@@ -80,7 +79,7 @@ class SupervisorMiscSpec extends AkkaSpec(SupervisorMiscSpec.config) with Defaul
       }
       expectMsg("preStart")
       expectMsg("preStart")
-      a.isTerminated should be(false)
+      a.isTerminated should ===(false)
     }
 
     "be able to recreate child when old child is Terminated" in {
@@ -156,8 +155,8 @@ class SupervisorMiscSpec extends AkkaSpec(SupervisorMiscSpec.config) with Defaul
         parent ! "doit"
       }
       val p = expectMsgType[ActorRef].path
-      p.parent should be(parent.path)
-      p.name should be("child")
+      p.parent should ===(parent.path)
+      p.name should ===("child")
     }
   }
 }

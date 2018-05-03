@@ -1,12 +1,10 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.camel
 
 import akka.actor.Actor
-import com.typesafe.config.Config
-import scala.concurrent.duration.Duration
-import java.util.concurrent.TimeUnit._
 
 private[camel] trait CamelSupport { this: Actor ⇒
 

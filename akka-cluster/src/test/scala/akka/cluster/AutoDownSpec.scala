@@ -1,11 +1,9 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.cluster
 
-import language.postfixOps
-import language.reflectiveCalls
 import scala.concurrent.duration._
 import akka.actor.Address
 import akka.actor.Scheduler
@@ -13,18 +11,17 @@ import akka.actor.ActorRef
 import akka.actor.Props
 import akka.cluster.MemberStatus._
 import akka.cluster.ClusterEvent._
+import akka.remote.RARP
 import akka.testkit.AkkaSpec
+import akka.testkit.TimingTest
 
 object AutoDownSpec {
   final case class DownCalled(address: Address)
 
-  val memberA = TestMember(Address("akka.tcp", "sys", "a", 2552), Up)
-  val memberB = TestMember(Address("akka.tcp", "sys", "b", 2552), Up)
-  val memberC = TestMember(Address("akka.tcp", "sys", "c", 2552), Up)
-
   class AutoDownTestActor(
+    memberA:                  Member,
     autoDownUnreachableAfter: FiniteDuration,
-    probe: ActorRef)
+    probe:                    ActorRef)
     extends AutoDownBase(autoDownUnreachableAfter) {
 
     override def selfAddress = memberA.address
@@ -38,14 +35,22 @@ object AutoDownSpec {
     }
 
   }
+
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
-class AutoDownSpec extends AkkaSpec {
+class AutoDownSpec extends AkkaSpec("akka.actor.provider=remote") {
   import AutoDownSpec._
 
+  val protocol =
+    if (RARP(system).provider.remoteSettings.Artery.Enabled) "akka"
+    else "akka.tcp"
+
+  val memberA = TestMember(Address(protocol, "sys", "a", 2552), Up)
+  val memberB = TestMember(Address(protocol, "sys", "b", 2552), Up)
+  val memberC = TestMember(Address(protocol, "sys", "c", 2552), Up)
+
   def autoDownActor(autoDownUnreachableAfter: FiniteDuration): ActorRef =
-    system.actorOf(Props(classOf[AutoDownTestActor], autoDownUnreachableAfter, testActor))
+    system.actorOf(Props(classOf[AutoDownTestActor], memberA, autoDownUnreachableAfter, testActor))
 
   "AutoDown" must {
 
@@ -88,7 +93,7 @@ class AutoDownSpec extends AkkaSpec {
       expectMsg(DownCalled(memberC.address))
     }
 
-    "not down unreachable when loosing leadership inbetween detection and specified duration" in {
+    "not down unreachable when losing leadership inbetween detection and specified duration" taggedAs TimingTest in {
       val a = autoDownActor(2.seconds)
       a ! LeaderChanged(Some(memberA.address))
       a ! UnreachableMember(memberC)
@@ -96,7 +101,7 @@ class AutoDownSpec extends AkkaSpec {
       expectNoMsg(3.second)
     }
 
-    "not down when unreachable become reachable inbetween detection and specified duration" in {
+    "not down when unreachable become reachable inbetween detection and specified duration" taggedAs TimingTest in {
       val a = autoDownActor(2.seconds)
       a ! LeaderChanged(Some(memberA.address))
       a ! UnreachableMember(memberB)
@@ -104,7 +109,7 @@ class AutoDownSpec extends AkkaSpec {
       expectNoMsg(3.second)
     }
 
-    "not down when unreachable is removed inbetween detection and specified duration" in {
+    "not down when unreachable is removed inbetween detection and specified duration" taggedAs TimingTest in {
       val a = autoDownActor(2.seconds)
       a ! LeaderChanged(Some(memberA.address))
       a ! UnreachableMember(memberB)

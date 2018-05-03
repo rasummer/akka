@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import scala.collection.immutable._
@@ -90,8 +91,8 @@ class ResendUnfulfillableException
 final case class AckedSendBuffer[T <: HasSequenceNumber](
   capacity: Int,
   nonAcked: IndexedSeq[T] = Vector.empty[T],
-  nacked: IndexedSeq[T] = Vector.empty[T],
-  maxSeq: SeqNo = SeqNo(-1)) {
+  nacked:   IndexedSeq[T] = Vector.empty[T],
+  maxSeq:   SeqNo         = SeqNo(-1)) {
 
   /**
    * Processes an incoming acknowledgement and returns a new buffer with only unacknowledged elements remaining.
@@ -99,7 +100,11 @@ final case class AckedSendBuffer[T <: HasSequenceNumber](
    * @return An updated buffer containing the remaining unacknowledged messages
    */
   def acknowledge(ack: Ack): AckedSendBuffer[T] = {
-    val newNacked = (nacked ++ nonAcked) filter { m ⇒ ack.nacks(m.seq) }
+    if (ack.cumulativeAck > maxSeq)
+      throw new IllegalArgumentException(s"Highest SEQ so far was $maxSeq but cumulative ACK is ${ack.cumulativeAck}")
+    val newNacked =
+      if (ack.nacks.isEmpty) Vector.empty
+      else (nacked ++ nonAcked) filter { m ⇒ ack.nacks(m.seq) }
     if (newNacked.size < ack.nacks.size) throw new ResendUnfulfillableException
     else this.copy(
       nonAcked = nonAcked.filter { m ⇒ m.seq > ack.cumulativeAck },
@@ -121,7 +126,7 @@ final case class AckedSendBuffer[T <: HasSequenceNumber](
     this.copy(nonAcked = this.nonAcked :+ msg, maxSeq = msg.seq)
   }
 
-  override def toString = nonAcked.map(_.seq).mkString("[", ", ", "]")
+  override def toString = s"[$maxSeq ${nonAcked.map(_.seq).mkString("{", ", ", "}")}]"
 }
 
 /**
@@ -133,9 +138,9 @@ final case class AckedSendBuffer[T <: HasSequenceNumber](
  * @param buf Buffer of messages that are waiting for delivery
  */
 final case class AckedReceiveBuffer[T <: HasSequenceNumber](
-  lastDelivered: SeqNo = SeqNo(-1),
-  cumulativeAck: SeqNo = SeqNo(-1),
-  buf: SortedSet[T] = TreeSet.empty[T])(implicit val seqOrdering: Ordering[T]) {
+  lastDelivered: SeqNo        = SeqNo(-1),
+  cumulativeAck: SeqNo        = SeqNo(-1),
+  buf:           SortedSet[T] = TreeSet.empty[T])(implicit val seqOrdering: Ordering[T]) {
 
   import SeqNo.ord.max
 
@@ -179,7 +184,8 @@ final case class AckedReceiveBuffer[T <: HasSequenceNumber](
       prev = bufferedMsg.seq
     }
 
-    (this.copy(buf = buf filterNot deliver.contains, lastDelivered = updatedLastDelivered), deliver, ack)
+    val newBuf = if (deliver.isEmpty) buf else buf.filterNot(deliver.contains)
+    (this.copy(buf = newBuf, lastDelivered = updatedLastDelivered), deliver, ack)
   }
 
   /**

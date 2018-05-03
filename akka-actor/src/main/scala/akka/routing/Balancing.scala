@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import scala.collection.immutable
@@ -66,14 +67,13 @@ private[akka] final class BalancingRoutingLogic extends RoutingLogic {
  */
 @SerialVersionUID(1L)
 final case class BalancingPool(
-  override val nrOfInstances: Int,
+  val nrOfInstances:               Int,
   override val supervisorStrategy: SupervisorStrategy = Pool.defaultSupervisorStrategy,
-  override val routerDispatcher: String = Dispatchers.DefaultDispatcherId)
+  override val routerDispatcher:   String             = Dispatchers.DefaultDispatcherId)
   extends Pool {
 
   def this(config: Config) =
-    this(
-      nrOfInstances = config.getInt("nr-of-instances"))
+    this(nrOfInstances = config.getInt("nr-of-instances"))
 
   /**
    * Java API
@@ -94,12 +94,17 @@ final case class BalancingPool(
    */
   def withDispatcher(dispatcherId: String): BalancingPool = copy(routerDispatcher = dispatcherId)
 
+  def nrOfInstances(sys: ActorSystem) = this.nrOfInstances
+
   /**
    * INTERNAL API
    */
   override private[akka] def newRoutee(routeeProps: Props, context: ActorContext): Routee = {
 
-    val deployPath = context.self.path.elements.drop(1).mkString("/", "/", "")
+    val rawDeployPath = context.self.path.elements.drop(1).mkString("/", "/", "")
+    val deployPath = BalancingPoolDeploy.invalidConfigKeyChars.foldLeft(rawDeployPath) { (replaced, c) ⇒
+      replaced.replace(c, '_')
+    }
     val dispatcherId = s"BalancingPool-$deployPath"
     def dispatchers = context.system.dispatchers
 
@@ -108,12 +113,14 @@ final case class BalancingPool(
       // dispatcher of this pool
       val deployDispatcherConfigPath = s"akka.actor.deployment.$deployPath.pool-dispatcher"
       val systemConfig = context.system.settings.config
-      val dispatcherConfig = context.system.dispatchers.config(dispatcherId,
-        // use the user defined 'pool-dispatcher' config as fallback, if any   
+      val dispatcherConfig = context.system.dispatchers.config(
+        dispatcherId,
+        // use the user defined 'pool-dispatcher' config as fallback, if any
         if (systemConfig.hasPath(deployDispatcherConfigPath)) systemConfig.getConfig(deployDispatcherConfigPath)
         else ConfigFactory.empty)
 
-      dispatchers.registerConfigurator(dispatcherId, new BalancingDispatcherConfigurator(dispatcherConfig,
+      dispatchers.registerConfigurator(dispatcherId, new BalancingDispatcherConfigurator(
+        dispatcherConfig,
         dispatchers.prerequisites))
     }
 
@@ -122,7 +129,7 @@ final case class BalancingPool(
   }
 
   /**
-   * Uses the supervisor strategy of the given Routerconfig
+   * Uses the supervisor strategy of the given RouterConfig
    * if this RouterConfig doesn't have one.
    */
   override def withFallback(other: RouterConfig): RouterConfig =
@@ -147,3 +154,10 @@ final case class BalancingPool(
 
 }
 
+/**
+ * INTERNAL API
+ * Can't be in the `BalancingPool` companion for binary compatibility reasons.
+ */
+private[akka] object BalancingPoolDeploy {
+  val invalidConfigKeyChars = List('$', '@', ':')
+}

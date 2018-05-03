@@ -1,29 +1,43 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
- * Copyright (C) 2012-2013 Eligotech BV.
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
+ * Copyright (C) 2012-2016 Eligotech BV.
  */
 
 package akka.persistence.journal.leveldb
 
 import java.io.File
 
-import scala.collection.immutable
-import scala.util._
-
-import org.iq80.leveldb._
-
+import scala.collection.mutable
 import akka.actor._
 import akka.persistence._
-import akka.persistence.journal.AsyncWriteTarget
+import akka.persistence.journal.WriteJournalBase
 import akka.serialization.SerializationExtension
+import org.iq80.leveldb._
+
+import scala.collection.immutable
+import scala.collection.JavaConverters._
+import scala.util._
+import scala.concurrent.Future
+import scala.util.control.NonFatal
+import akka.persistence.journal.Tagged
+import com.typesafe.config.{ Config, ConfigFactory, ConfigObject }
+
+private[persistence] object LeveldbStore {
+  val emptyConfig = ConfigFactory.empty()
+
+  def toCompactionIntervalMap(obj: ConfigObject): Map[String, Long] = {
+    obj.unwrapped().asScala.map(entry ⇒ (entry._1, java.lang.Long.parseLong(entry._2.toString))).toMap
+  }
+}
 
 /**
  * INTERNAL API.
  */
-private[persistence] trait LeveldbStore extends Actor with LeveldbIdMapping with LeveldbRecovery {
-  val configPath: String
+private[persistence] trait LeveldbStore extends Actor with WriteJournalBase with LeveldbIdMapping with LeveldbRecovery with LeveldbCompaction {
 
-  val config = context.system.settings.config.getConfig(configPath)
+  def prepareConfig: Config
+
+  val config: Config = prepareConfig
   val nativeLeveldb = config.getBoolean("native")
 
   val leveldbOptions = new Options().createIfMissing(true)
@@ -31,6 +45,14 @@ private[persistence] trait LeveldbStore extends Actor with LeveldbIdMapping with
   val leveldbWriteOptions = new WriteOptions().sync(config.getBoolean("fsync")).snapshot(false)
   val leveldbDir = new File(config.getString("dir"))
   var leveldb: DB = _
+  override val compactionIntervals: Map[String, Long] = LeveldbStore.toCompactionIntervalMap(config.getObject("compaction-intervals"))
+
+  private val persistenceIdSubscribers = new mutable.HashMap[String, mutable.Set[ActorRef]] with mutable.MultiMap[String, ActorRef]
+  private val tagSubscribers = new mutable.HashMap[String, mutable.Set[ActorRef]] with mutable.MultiMap[String, ActorRef]
+  private var allPersistenceIdsSubscribers = Set.empty[ActorRef]
+
+  private var tagSequenceNr = Map.empty[String, Long]
+  private val tagPersistenceIdPrefix = "$$$"
 
   def leveldbFactory =
     if (nativeLeveldb) org.fusesource.leveldbjni.JniDBFactory.factory
@@ -40,34 +62,69 @@ private[persistence] trait LeveldbStore extends Actor with LeveldbIdMapping with
 
   import Key._
 
-  def writeMessages(messages: immutable.Seq[PersistentRepr]) =
-    withBatch(batch ⇒ messages.foreach(message ⇒ addToMessageBatch(message, batch)))
+  def asyncWriteMessages(messages: immutable.Seq[AtomicWrite]): Future[immutable.Seq[Try[Unit]]] = {
+    var persistenceIds = Set.empty[String]
+    var allTags = Set.empty[String]
 
-  def writeConfirmations(confirmations: immutable.Seq[PersistentConfirmation]) =
-    withBatch(batch ⇒ confirmations.foreach(confirmation ⇒ addToConfirmationBatch(confirmation, batch)))
+    val result = Future.fromTry(Try {
+      withBatch(batch ⇒ messages.map { a ⇒
+        Try {
+          a.payload.foreach { p ⇒
+            val (p2, tags) = p.payload match {
+              case Tagged(payload, tags) ⇒
+                (p.withPayload(payload), tags)
+              case _ ⇒ (p, Set.empty[String])
+            }
+            if (tags.nonEmpty && hasTagSubscribers)
+              allTags = allTags union tags
 
-  def deleteMessages(messageIds: immutable.Seq[PersistentId], permanent: Boolean) = withBatch { batch ⇒
-    messageIds foreach { messageId ⇒
-      if (permanent) batch.delete(keyToBytes(Key(numericId(messageId.persistenceId), messageId.sequenceNr, 0)))
-      else batch.put(keyToBytes(deletionKey(numericId(messageId.persistenceId), messageId.sequenceNr)), Array.emptyByteArray)
+            require(
+              !p2.persistenceId.startsWith(tagPersistenceIdPrefix),
+              s"persistenceId [${p.persistenceId}] must not start with $tagPersistenceIdPrefix")
+            addToMessageBatch(p2, tags, batch)
+          }
+          if (hasPersistenceIdSubscribers)
+            persistenceIds += a.persistenceId
+        }
+      })
+    })
+
+    if (hasPersistenceIdSubscribers) {
+      persistenceIds.foreach { pid ⇒
+        notifyPersistenceIdChange(pid)
+      }
     }
+    if (hasTagSubscribers && allTags.nonEmpty)
+      allTags.foreach(notifyTagChange)
+    result
   }
 
-  def deleteMessagesTo(persistenceId: String, toSequenceNr: Long, permanent: Boolean) = withBatch { batch ⇒
-    val nid = numericId(persistenceId)
+  def asyncDeleteMessagesTo(persistenceId: String, toSequenceNr: Long): Future[Unit] =
+    try Future.successful {
+      withBatch { batch ⇒
+        val nid = numericId(persistenceId)
 
-    // seek to first existing message
-    val fromSequenceNr = withIterator { iter ⇒
-      val startKey = Key(nid, 1L, 0)
-      iter.seek(keyToBytes(startKey))
-      if (iter.hasNext) keyFromBytes(iter.peekNext().getKey).sequenceNr else Long.MaxValue
-    }
+        // seek to first existing message
+        val fromSequenceNr = withIterator { iter ⇒
+          val startKey = Key(nid, 1L, 0)
+          iter.seek(keyToBytes(startKey))
+          if (iter.hasNext) keyFromBytes(iter.peekNext().getKey).sequenceNr else Long.MaxValue
+        }
 
-    fromSequenceNr to toSequenceNr foreach { sequenceNr ⇒
-      if (permanent) batch.delete(keyToBytes(Key(nid, sequenceNr, 0))) // TODO: delete confirmations and deletion markers, if any.
-      else batch.put(keyToBytes(deletionKey(nid, sequenceNr)), Array.emptyByteArray)
+        if (fromSequenceNr != Long.MaxValue) {
+          val toSeqNr = math.min(toSequenceNr, readHighestSequenceNr(nid))
+          var sequenceNr = fromSequenceNr
+          while (sequenceNr <= toSeqNr) {
+            batch.delete(keyToBytes(Key(nid, sequenceNr, 0)))
+            sequenceNr += 1
+          }
+
+          self ! LeveldbCompaction.TryCompactLeveldb(persistenceId, toSeqNr)
+        }
+      }
+    } catch {
+      case NonFatal(e) ⇒ Future.failed(e)
     }
-  }
 
   def leveldbSnapshot(): ReadOptions = leveldbReadOptions.snapshot(leveldb.getSnapshot)
 
@@ -96,17 +153,34 @@ private[persistence] trait LeveldbStore extends Actor with LeveldbIdMapping with
   def persistentToBytes(p: PersistentRepr): Array[Byte] = serialization.serialize(p).get
   def persistentFromBytes(a: Array[Byte]): PersistentRepr = serialization.deserialize(a, classOf[PersistentRepr]).get
 
-  private def addToMessageBatch(persistent: PersistentRepr, batch: WriteBatch): Unit = {
+  private def addToMessageBatch(persistent: PersistentRepr, tags: Set[String], batch: WriteBatch): Unit = {
+    val persistentBytes = persistentToBytes(persistent)
     val nid = numericId(persistent.persistenceId)
     batch.put(keyToBytes(counterKey(nid)), counterToBytes(persistent.sequenceNr))
-    batch.put(keyToBytes(Key(nid, persistent.sequenceNr, 0)), persistentToBytes(persistent))
+    batch.put(keyToBytes(Key(nid, persistent.sequenceNr, 0)), persistentBytes)
+
+    tags.foreach { tag ⇒
+      val tagNid = tagNumericId(tag)
+      val tagSeqNr = nextTagSequenceNr(tag)
+      batch.put(keyToBytes(counterKey(tagNid)), counterToBytes(tagSeqNr))
+      batch.put(keyToBytes(Key(tagNid, tagSeqNr, 0)), persistentBytes)
+    }
   }
 
-  private def addToConfirmationBatch(confirmation: PersistentConfirmation, batch: WriteBatch): Unit = {
-    val npid = numericId(confirmation.persistenceId)
-    val ncid = numericId(confirmation.channelId)
-    batch.put(keyToBytes(Key(npid, confirmation.sequenceNr, ncid)), confirmation.channelId.getBytes("UTF-8"))
+  private def nextTagSequenceNr(tag: String): Long = {
+    val n = tagSequenceNr.get(tag) match {
+      case Some(n) ⇒ n
+      case None    ⇒ readHighestSequenceNr(tagNumericId(tag))
+    }
+    tagSequenceNr = tagSequenceNr.updated(tag, n + 1)
+    n + 1
   }
+
+  def tagNumericId(tag: String): Int =
+    numericId(tagAsPersistenceId(tag))
+
+  def tagAsPersistenceId(tag: String): String =
+    tagPersistenceIdPrefix + tag
 
   override def preStart() {
     leveldb = leveldbFactory.open(leveldbDir, if (nativeLeveldb) leveldbOptions else leveldbOptions.compressionType(CompressionType.NONE))
@@ -117,26 +191,52 @@ private[persistence] trait LeveldbStore extends Actor with LeveldbIdMapping with
     leveldb.close()
     super.postStop()
   }
-}
 
-/**
- * A LevelDB store that can be shared by multiple actor systems. The shared store must be
- * set for each actor system that uses the store via `SharedLeveldbJournal.setStore`. The
- * shared LevelDB store is for testing only.
- */
-class SharedLeveldbStore extends { val configPath = "akka.persistence.journal.leveldb-shared.store" } with LeveldbStore {
-  import AsyncWriteTarget._
+  protected def hasPersistenceIdSubscribers: Boolean = persistenceIdSubscribers.nonEmpty
 
-  def receive = {
-    case WriteMessages(msgs)                        ⇒ sender() ! writeMessages(msgs)
-    case WriteConfirmations(cnfs)                   ⇒ sender() ! writeConfirmations(cnfs)
-    case DeleteMessages(messageIds, permanent)      ⇒ sender() ! deleteMessages(messageIds, permanent)
-    case DeleteMessagesTo(pid, tsnr, permanent)     ⇒ sender() ! deleteMessagesTo(pid, tsnr, permanent)
-    case ReadHighestSequenceNr(pid, fromSequenceNr) ⇒ sender() ! readHighestSequenceNr(numericId(pid))
-    case ReplayMessages(pid, fromSnr, toSnr, max) ⇒
-      Try(replayMessages(numericId(pid), fromSnr, toSnr, max)(sender() ! _)) match {
-        case Success(max)   ⇒ sender() ! ReplaySuccess
-        case Failure(cause) ⇒ sender() ! ReplayFailure(cause)
-      }
+  protected def addPersistenceIdSubscriber(subscriber: ActorRef, persistenceId: String): Unit =
+    persistenceIdSubscribers.addBinding(persistenceId, subscriber)
+
+  protected def removeSubscriber(subscriber: ActorRef): Unit = {
+    val keys = persistenceIdSubscribers.collect { case (k, s) if s.contains(subscriber) ⇒ k }
+    keys.foreach { key ⇒ persistenceIdSubscribers.removeBinding(key, subscriber) }
+
+    val tagKeys = tagSubscribers.collect { case (k, s) if s.contains(subscriber) ⇒ k }
+    tagKeys.foreach { key ⇒ tagSubscribers.removeBinding(key, subscriber) }
+
+    allPersistenceIdsSubscribers -= subscriber
   }
+
+  protected def hasTagSubscribers: Boolean = tagSubscribers.nonEmpty
+
+  protected def addTagSubscriber(subscriber: ActorRef, tag: String): Unit =
+    tagSubscribers.addBinding(tag, subscriber)
+
+  protected def hasAllPersistenceIdsSubscribers: Boolean = allPersistenceIdsSubscribers.nonEmpty
+
+  protected def addAllPersistenceIdsSubscriber(subscriber: ActorRef): Unit = {
+    allPersistenceIdsSubscribers += subscriber
+    subscriber ! LeveldbJournal.CurrentPersistenceIds(allPersistenceIds)
+  }
+
+  private def notifyPersistenceIdChange(persistenceId: String): Unit =
+    if (persistenceIdSubscribers.contains(persistenceId)) {
+      val changed = LeveldbJournal.EventAppended(persistenceId)
+      persistenceIdSubscribers(persistenceId).foreach(_ ! changed)
+    }
+
+  private def notifyTagChange(tag: String): Unit =
+    if (tagSubscribers.contains(tag)) {
+      val changed = LeveldbJournal.TaggedEventAppended(tag)
+      tagSubscribers(tag).foreach(_ ! changed)
+    }
+
+  override protected def newPersistenceIdAdded(id: String): Unit = {
+    if (hasAllPersistenceIdsSubscribers && !id.startsWith(tagPersistenceIdPrefix)) {
+      val added = LeveldbJournal.PersistenceIdAdded(id)
+      allPersistenceIdsSubscribers.foreach(_ ! added)
+    }
+  }
+
 }
+

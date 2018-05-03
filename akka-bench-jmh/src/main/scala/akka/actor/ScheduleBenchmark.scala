@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2014-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
 import java.util.concurrent.TimeUnit
@@ -56,21 +57,21 @@ class ScheduleBenchmark {
   var promise: Promise[Any] = _
 
   @Setup(Level.Iteration)
-  def setup() {
+  def setup(): Unit = {
     winner = (to * ratio + 1).toInt
     promise = Promise[Any]()
   }
 
   @TearDown
-  def shutdown() {
-    system.shutdown()
-    system.awaitTermination()
+  def shutdown(): Unit = {
+    system.terminate()
+    Await.ready(system.whenTerminated, 15.seconds)
   }
 
   def op(idx: Int) = if (idx == winner) promise.trySuccess(idx) else idx
 
   @Benchmark
-  def oneSchedule = {
+  def oneSchedule(): Unit = {
     val aIdx = new AtomicInteger(1)
     val tryWithNext = scheduler.schedule(0.millis, interval) {
       val idx = aIdx.getAndIncrement
@@ -84,7 +85,7 @@ class ScheduleBenchmark {
   }
 
   @Benchmark
-  def multipleScheduleOnce = {
+  def multipleScheduleOnce(): Unit = {
     val tryWithNext = (1 to to).foldLeft(0.millis -> List[Cancellable]()) {
       case ((interv, c), idx) ⇒
         (interv + interval, scheduler.scheduleOnce(interv) {

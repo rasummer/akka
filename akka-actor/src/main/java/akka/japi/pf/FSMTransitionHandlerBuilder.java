@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.japi.pf;
@@ -13,11 +13,10 @@ import scala.Tuple2;
  *
  * @param <S> the state type
  *
- * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
  */
 public class FSMTransitionHandlerBuilder<S> {
 
-  private UnitPFBuilder<Tuple2<S, S>> builder =
+  private final UnitPFBuilder<Tuple2<S, S>> builder =
     new UnitPFBuilder<Tuple2<S, S>>();
 
   /**

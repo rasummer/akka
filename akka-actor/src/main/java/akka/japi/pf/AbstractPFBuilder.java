@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.japi.pf;
@@ -12,7 +12,6 @@ import scala.PartialFunction;
  * @param <F> the input type, that this PartialFunction will be applied to
  * @param <T> the return type, that the results of the application will have
  *
- * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
  */
 abstract class AbstractPFBuilder<F, T> {
 

@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.persistence.snapshot.local
 
 import com.typesafe.config.ConfigFactory
@@ -5,12 +9,11 @@ import com.typesafe.config.ConfigFactory
 import akka.persistence.PluginCleanup
 import akka.persistence.snapshot.SnapshotStoreSpec
 
-class LocalSnapshotStoreSpec extends SnapshotStoreSpec with PluginCleanup {
-  lazy val config = ConfigFactory.parseString(
+class LocalSnapshotStoreSpec extends SnapshotStoreSpec(
+  config = ConfigFactory.parseString(
     """
-      |akka.test.timefactor = 3
-      |akka.persistence.snapshot-store.plugin = "akka.persistence.snapshot-store.local"
-      |akka.persistence.snapshot-store.local.dir = "target/snapshots"
-    """.stripMargin)
-
-}
+    akka.test.timefactor = 3
+    akka.persistence.snapshot-store.plugin = "akka.persistence.snapshot-store.local"
+    akka.persistence.snapshot-store.local.dir = "target/snapshots"
+    """))
+  with PluginCleanup

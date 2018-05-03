@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor.dsl
@@ -116,8 +116,7 @@ trait Inbox { this: ActorDSL.type ⇒
           val toKick = overdue.next()
           toKick.client ! Status.Failure(new TimeoutException("deadline passed"))
         }
-        // TODO: this wants to lose the `Queue.empty ++=` part when SI-6208 is fixed
-        clients = Queue.empty ++= clients.filterNot(pred)
+        clients = clients.filterNot(pred)
         clientsByTimeout = clientsByTimeout.from(Get(now))
       case msg ⇒
         if (clients.isEmpty) enqueueMessage(msg)
@@ -157,8 +156,8 @@ trait Inbox { this: ActorDSL.type ⇒
 
   /**
    * Create a new actor which will internally queue up messages it gets so that
-   * they can be interrogated with the [[akka.actor.dsl.Inbox!.Inbox!.receive]]
-   * and [[akka.actor.dsl.Inbox!.Inbox!.select]] methods. It will be created as
+   * they can be interrogated with the `akka.actor.dsl.Inbox!.Inbox!.receive`
+   * and `akka.actor.dsl.Inbox!.Inbox!.select` methods. It will be created as
    * a system actor in the ActorSystem which is implicitly (or explicitly)
    * supplied.
    */

@@ -1,8 +1,10 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
+import java.lang.reflect.InvocationTargetException
 import language.implicitConversions
 import java.lang.{ Iterable ⇒ JIterable }
 import java.util.concurrent.TimeUnit
@@ -145,7 +147,7 @@ object SupervisorStrategy extends SupervisorStrategyLowPriorityImplicits {
 
   /**
    * When supervisorStrategy is not specified for an actor this
-   * [[Decider]] is used by default in the supervisor strategy.
+   * `Decider` is used by default in the supervisor strategy.
    * The child will be stopped when [[akka.actor.ActorInitializationException]],
    * [[akka.actor.ActorKilledException]], or [[akka.actor.DeathPactException]] is
    * thrown. It will be restarted for other `Exception` types.
@@ -294,20 +296,20 @@ abstract class SupervisorStrategy {
   def handleFailure(context: ActorContext, child: ActorRef, cause: Throwable, stats: ChildRestartStats, children: Iterable[ChildRestartStats]): Boolean = {
     val directive = decider.applyOrElse(cause, escalateDefault)
     directive match {
-      case d @ Resume ⇒
-        logFailure(context, child, cause, d)
+      case Resume ⇒
+        logFailure(context, child, cause, directive)
         resumeChild(child, cause)
         true
-      case d @ Restart ⇒
-        logFailure(context, child, cause, d)
+      case Restart ⇒
+        logFailure(context, child, cause, directive)
         processFailure(context, true, child, cause, stats, children)
         true
-      case d @ Stop ⇒
-        logFailure(context, child, cause, d)
+      case Stop ⇒
+        logFailure(context, child, cause, directive)
         processFailure(context, false, child, cause, stats, children)
         true
-      case d @ Escalate ⇒
-        logFailure(context, child, cause, d)
+      case Escalate ⇒
+        logFailure(context, child, cause, directive)
         false
     }
   }
@@ -328,7 +330,10 @@ abstract class SupervisorStrategy {
   def logFailure(context: ActorContext, child: ActorRef, cause: Throwable, decision: Directive): Unit =
     if (loggingEnabled) {
       val logMessage = cause match {
-        case e: ActorInitializationException if e.getCause ne null ⇒ e.getCause.getMessage
+        case e: ActorInitializationException if e.getCause ne null ⇒ e.getCause match {
+          case ex: InvocationTargetException if ex.getCause ne null ⇒ ex.getCause.getMessage
+          case ex ⇒ ex.getMessage
+        }
         case e ⇒ e.getMessage
       }
       decision match {
@@ -380,9 +385,9 @@ abstract class SupervisorStrategy {
  * @param loggingEnabled the strategy logs the failure if this is enabled (true), by default it is enabled
  */
 case class AllForOneStrategy(
-  maxNrOfRetries: Int = -1,
-  withinTimeRange: Duration = Duration.Inf,
-  override val loggingEnabled: Boolean = true)(val decider: SupervisorStrategy.Decider)
+  maxNrOfRetries:              Int      = -1,
+  withinTimeRange:             Duration = Duration.Inf,
+  override val loggingEnabled: Boolean  = true)(val decider: SupervisorStrategy.Decider)
   extends SupervisorStrategy {
 
   import SupervisorStrategy._
@@ -407,21 +412,18 @@ case class AllForOneStrategy(
 
   /**
    * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
    */
   def this(maxNrOfRetries: Int, withinTimeRange: Duration, decider: SupervisorStrategy.Decider) =
     this(maxNrOfRetries = maxNrOfRetries, withinTimeRange = withinTimeRange)(decider)
 
   /**
    * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
    */
   def this(loggingEnabled: Boolean, decider: SupervisorStrategy.Decider) =
     this(loggingEnabled = loggingEnabled)(decider)
 
   /**
    * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
    */
   def this(decider: SupervisorStrategy.Decider) =
     this()(decider)
@@ -458,9 +460,9 @@ case class AllForOneStrategy(
  * @param loggingEnabled the strategy logs the failure if this is enabled (true), by default it is enabled
  */
 case class OneForOneStrategy(
-  maxNrOfRetries: Int = -1,
-  withinTimeRange: Duration = Duration.Inf,
-  override val loggingEnabled: Boolean = true)(val decider: SupervisorStrategy.Decider)
+  maxNrOfRetries:              Int      = -1,
+  withinTimeRange:             Duration = Duration.Inf,
+  override val loggingEnabled: Boolean  = true)(val decider: SupervisorStrategy.Decider)
   extends SupervisorStrategy {
 
   /**
@@ -483,21 +485,15 @@ case class OneForOneStrategy(
 
   /**
    * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
    */
   def this(maxNrOfRetries: Int, withinTimeRange: Duration, decider: SupervisorStrategy.Decider) =
     this(maxNrOfRetries = maxNrOfRetries, withinTimeRange = withinTimeRange)(decider)
 
-  /**
-   * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
-   */
   def this(loggingEnabled: Boolean, decider: SupervisorStrategy.Decider) =
     this(loggingEnabled = loggingEnabled)(decider)
 
   /**
    * Java API: compatible with lambda expressions
-   * This is an EXPERIMENTAL feature and is subject to change until it has received more real world testing.
    */
   def this(decider: SupervisorStrategy.Decider) =
     this()(decider)

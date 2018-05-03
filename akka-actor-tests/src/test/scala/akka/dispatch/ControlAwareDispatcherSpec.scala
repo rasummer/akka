@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.dispatch
 
 import akka.testkit.{ DefaultTimeout, AkkaSpec }
@@ -16,7 +20,6 @@ object ControlAwareDispatcherSpec {
   case object ImportantMessage extends ControlMessage
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class ControlAwareDispatcherSpec extends AkkaSpec(ControlAwareDispatcherSpec.config) with DefaultTimeout {
   import ControlAwareDispatcherSpec.ImportantMessage
 

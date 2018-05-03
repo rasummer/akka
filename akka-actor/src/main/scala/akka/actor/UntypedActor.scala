@@ -1,10 +1,8 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
-
-import akka.japi.{ Creator }
 
 /**
  * Actor base trait that should be extended by or mixed to create an Actor with the semantics of the 'Actor Model':
@@ -94,13 +92,15 @@ import akka.japi.{ Creator }
  *  }
  * }}}
  */
+@Deprecated
+@deprecated("Use AbstractActor instead of UntypedActor.", since = "2.5.0")
 abstract class UntypedActor extends Actor {
 
   /**
    * To be implemented by concrete UntypedActor, this defines the behavior of the
    * UntypedActor.
    */
-  @throws(classOf[Exception])
+  @throws(classOf[Throwable])
   def onReceive(message: Any): Unit
 
   /**

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.contrib.throttle
@@ -10,10 +10,7 @@ import akka.actor.ActorSystem
 import akka.actor.Actor
 import akka.actor.Props
 import akka.testkit.TestKit
-import akka.testkit.ImplicitSender
 import akka.contrib.throttle.Throttler._
-import org.junit.runner.RunWith
-import org.scalatest.junit.JUnitRunner
 import org.scalatest.WordSpecLike
 import org.scalatest.Matchers
 import org.scalatest.BeforeAndAfterAll
@@ -33,7 +30,6 @@ object TimerBasedThrottlerSpec {
   //#demo-code
 }
 
-@RunWith(classOf[JUnitRunner])
 class TimerBasedThrottlerSpec extends TestKit(ActorSystem("TimerBasedThrottlerSpec")) with ImplicitSender
   with WordSpecLike with Matchers with BeforeAndAfterAll {
 
@@ -49,7 +45,8 @@ class TimerBasedThrottlerSpec extends TestKit(ActorSystem("TimerBasedThrottlerSp
       //#demo-code
       val printer = system.actorOf(Props[PrintActor])
       // The throttler for this example, setting the rate
-      val throttler = system.actorOf(Props(classOf[TimerBasedThrottler],
+      val throttler = system.actorOf(Props(
+        classOf[TimerBasedThrottler],
         3 msgsPer 1.second))
       // Set the target
       throttler ! SetTarget(Some(printer))
@@ -76,36 +73,36 @@ class TimerBasedThrottlerSpec extends TestKit(ActorSystem("TimerBasedThrottlerSp
 
     "send messages after a `SetTarget(None)` pause" in {
       val echo = system.actorOf(TestActors.echoActorProps)
-      val throttler = system.actorOf(Props(classOf[TimerBasedThrottler], 3 msgsPer (1.second.dilated)))
+      val throttler = system.actorOf(Props(classOf[TimerBasedThrottler], 3 msgsPer (5.second.dilated)))
       throttler ! SetTarget(Some(echo))
       1 to 3 foreach { throttler ! _ }
       throttler ! SetTarget(None)
-      within(1 second) {
-        1 to 3 foreach { expectMsg(_) }
+      within(1.7 second) {
+        expectMsg(1)
         expectNoMsg()
       }
       expectNoMsg(1 second)
       throttler ! SetTarget(Some(echo))
       4 to 7 foreach { throttler ! _ }
-      within(1.5 seconds) {
-        4 to 7 foreach { expectMsg(_) }
+      within(10.5 seconds) {
+        2 to 7 foreach { expectMsg(_) }
       }
     }
 
     "keep messages when the target is set to None" in {
       val echo = system.actorOf(TestActors.echoActorProps)
-      val throttler = system.actorOf(Props(classOf[TimerBasedThrottler], 3 msgsPer (1.second.dilated)))
+      val throttler = system.actorOf(Props(classOf[TimerBasedThrottler], 3 msgsPer (5.second.dilated)))
       throttler ! SetTarget(Some(echo))
       1 to 7 foreach { throttler ! _ }
       throttler ! SetTarget(None)
-      within(1 second) {
-        1 to 3 foreach { expectMsg(_) }
+      within(1.7 second) {
+        expectMsg(1)
         expectNoMsg()
       }
       expectNoMsg(1 second)
       throttler ! SetTarget(Some(echo))
-      within(1.5 seconds) {
-        4 to 7 foreach { expectMsg(_) }
+      within(10.5 seconds) {
+        2 to 7 foreach { expectMsg(_) }
       }
     }
 

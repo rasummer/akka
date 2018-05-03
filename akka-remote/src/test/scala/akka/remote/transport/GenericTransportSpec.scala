@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.remote.transport
 
 import akka.actor.{ ExtendedActorSystem, Address }
@@ -11,7 +15,7 @@ import akka.remote.RemoteActorRefProvider
 import akka.remote.transport.TestTransport.{ DisassociateAttempt, WriteAttempt, ListenAttempt, AssociateAttempt }
 
 abstract class GenericTransportSpec(withAkkaProtocol: Boolean = false)
-  extends AkkaSpec("""akka.actor.provider = "akka.remote.RemoteActorRefProvider" """)
+  extends AkkaSpec("""akka.actor.provider = remote """)
   with DefaultTimeout with ImplicitSender {
 
   def transportName: String
@@ -44,13 +48,13 @@ abstract class GenericTransportSpec(withAkkaProtocol: Boolean = false)
 
       val result = Await.result(transportA.listen, timeout.duration)
 
-      result._1 should be(addressA)
+      result._1 should ===(addressA)
       result._2 should not be null
 
       registry.logSnapshot.exists {
         case ListenAttempt(address) ⇒ address == addressATest
         case _                      ⇒ false
-      } should be(true)
+      } should ===(true)
     }
 
     "associate successfully with another transport of its kind" in {
@@ -69,7 +73,7 @@ abstract class GenericTransportSpec(withAkkaProtocol: Boolean = false)
         case InboundAssociation(handle) if handle.remoteAddress == addressA ⇒
       }
 
-      registry.logSnapshot.contains(AssociateAttempt(addressATest, addressBTest)) should be(true)
+      registry.logSnapshot.contains(AssociateAttempt(addressATest, addressBTest)) should ===(true)
       awaitCond(registry.existsAssociation(addressATest, addressBTest))
     }
 
@@ -118,7 +122,7 @@ abstract class GenericTransportSpec(withAkkaProtocol: Boolean = false)
       registry.logSnapshot.exists {
         case WriteAttempt(`addressATest`, `addressBTest`, sentPdu) ⇒ sentPdu == pdu
         case _ ⇒ false
-      } should be(true)
+      } should ===(true)
     }
 
     "successfully disassociate" in {

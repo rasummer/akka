@@ -1,14 +1,13 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit
 
 import java.io.PrintStream
 import java.lang.management.{ ManagementFactory, ThreadInfo }
 import java.util.Date
 import java.util.concurrent.{ TimeoutException, CountDownLatch }
-import org.scalatest.{ BeforeAndAfterAll, Suite }
-import scala.annotation.tailrec
 import scala.concurrent.{ Promise, Awaitable, CanAwait, Await }
 import scala.concurrent.duration._
 import scala.util.control.NonFatal
@@ -80,7 +79,7 @@ object Coroner {
    */
   def watch(duration: FiniteDuration, reportTitle: String, out: PrintStream,
             startAndStopDuration: FiniteDuration = defaultStartAndStopDuration,
-            displayThreadCounts: Boolean = false): WatchHandle = {
+            displayThreadCounts:  Boolean        = false): WatchHandle = {
 
     val watchedHandle = new WatchHandleImpl(startAndStopDuration)
 
@@ -225,7 +224,7 @@ object Coroner {
         for (li ← locks) appendMsg("\t- ", li)
       }
       sb.append('\n')
-      return sb.toString
+      sb.toString
     }
 
     println("All threads:")

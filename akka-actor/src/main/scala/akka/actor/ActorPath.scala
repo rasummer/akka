@@ -1,28 +1,130 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
-import scala.annotation.tailrec
+import scala.annotation.{ switch, tailrec }
 import scala.collection.immutable
 import akka.japi.Util.immutableSeq
 import java.net.MalformedURLException
 import java.lang.{ StringBuilder ⇒ JStringBuilder }
+
+/**
+ * Java API
+ */
+object ActorPaths {
+  // static forwarders to `object ActorPath`, since `trait ActorPath`
+  // could not be changed to `abstract ActorPath` in a binary compatible way
+
+  /**
+   * Parse string as actor path; throws java.net.MalformedURLException if unable to do so.
+   */
+  def fromString(s: String): ActorPath = ActorPath.fromString(s)
+
+  /**
+   * Validates the given actor path element and throws an [[InvalidActorNameException]] if invalid.
+   * See [[#isValidPathElement]] for a non-throwing version.
+   *
+   * @param element actor path element to be validated
+   */
+  final def validatePathElement(element: String): Unit = ActorPath.validatePathElement(element)
+
+  /**
+   * Validates the given actor path element and throws an [[InvalidActorNameException]] if invalid.
+   * See [[#isValidPathElement]] for a non-throwing version.
+   *
+   * @param element actor path element to be validated
+   * @param fullPath optional fullPath element that may be included for better error messages; null if not given
+   */
+  final def validatePathElement(element: String, fullPath: String): Unit =
+    ActorPath.validatePathElement(element, fullPath)
+
+  /**
+   * This method is used to validate a path element (Actor Name).
+   * Since Actors form a tree, it is addressable using an URL, therefore an Actor Name has to conform to:
+   * <a href="http://www.ietf.org/rfc/rfc2396.txt">RFC-2396</a>.
+   *
+   * User defined Actor names may not start from a `$` sign - these are reserved for system names.
+   */
+  final def isValidPathElement(s: String): Boolean = ActorPath.isValidPathElement(s)
+
+}
 
 object ActorPath {
   /**
    * Parse string as actor path; throws java.net.MalformedURLException if unable to do so.
    */
   def fromString(s: String): ActorPath = s match {
-    case ActorPathExtractor(addr, elems) ⇒ RootActorPath(addr) / elems
-    case _                               ⇒ throw new MalformedURLException("cannot parse as ActorPath: " + s)
+    case ActorPathExtractor(address, elems) ⇒ RootActorPath(address) / elems
+    case _                                  ⇒ throw new MalformedURLException("cannot parse as ActorPath: " + s)
+  }
+
+  private final val ValidSymbols = """-_.*$+:@&=,!~';"""
+
+  private final val ValidPathCode = -1
+  private final val EmptyPathCode = -2
+
+  /**
+   * Validates the given actor path element and throws an [[InvalidActorNameException]] if invalid.
+   * See [[#isValidPathElement]] for a non-throwing version.
+   *
+   * @param element actor path element to be validated
+   */
+  final def validatePathElement(element: String): Unit = validatePathElement(element, fullPath = null)
+
+  /**
+   * Validates the given actor path element and throws an [[InvalidActorNameException]] if invalid.
+   * See [[#isValidPathElement]] for a non-throwing version.
+   *
+   * @param element actor path element to be validated
+   * @param fullPath optional fullPath element that may be included for better error messages; null if not given
+   */
+  final def validatePathElement(element: String, fullPath: String): Unit = {
+    def fullPathMsg = if (fullPath ne null) s""" (in path [$fullPath])""" else ""
+
+    (findInvalidPathElementCharPosition(element): @switch) match {
+      case ValidPathCode ⇒
+      // valid
+      case EmptyPathCode ⇒
+        throw InvalidActorNameException(s"Actor path element must not be empty $fullPathMsg")
+      case invalidAt ⇒
+        throw InvalidActorNameException(
+          s"""Invalid actor path element [$element]$fullPathMsg, illegal character [${element(invalidAt)}] at position: $invalidAt. """ +
+            """Actor paths MUST: """ +
+            """not start with `$`, """ +
+            s"""include only ASCII letters and can only contain these special characters: ${ActorPath.ValidSymbols}.""")
+    }
   }
 
   /**
-   * This Regular Expression is used to validate a path element (Actor Name).
+   * This method is used to validate a path element (Actor Name).
    * Since Actors form a tree, it is addressable using an URL, therefore an Actor Name has to conform to:
-   * http://www.ietf.org/rfc/rfc2396.txt
+   * <a href="http://www.ietf.org/rfc/rfc2396.txt">RFC-2396</a>.
+   *
+   * User defined Actor names may not start from a `$` sign - these are reserved for system names.
    */
-  val ElementRegex = """(?:[-\w:@&=+,.!~*'_;]|%\p{XDigit}{2})(?:[-\w:@&=+,.!~*'$_;]|%\p{XDigit}{2})*""".r
+  final def isValidPathElement(s: String): Boolean =
+    findInvalidPathElementCharPosition(s) == ValidPathCode
+
+  private final def findInvalidPathElementCharPosition(s: String): Int = if (s.isEmpty) EmptyPathCode else {
+    def isValidChar(c: Char): Boolean =
+      (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || (ValidSymbols.indexOf(c) != -1)
+
+    def isHexChar(c: Char): Boolean =
+      (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F') || (c >= '0' && c <= '9')
+
+    val len = s.length
+    def validate(pos: Int): Int =
+      if (pos < len)
+        s.charAt(pos) match {
+          case c if isValidChar(c) ⇒ validate(pos + 1)
+          case '%' if pos + 2 < len && isHexChar(s.charAt(pos + 1)) && isHexChar(s.charAt(pos + 2)) ⇒ validate(pos + 3)
+          case _ ⇒ pos
+        }
+      else ValidPathCode
+
+    if (len > 0 && s.charAt(0) != '$') validate(0) else 0
+  }
 
   private[akka] final val emptyActorPath: immutable.Iterable[String] = List("")
 }
@@ -34,7 +136,7 @@ object ActorPath {
  * ActorPath defines a natural ordering (so that ActorRefs can be put into
  * collections with this requirement); this ordering is intended to be as fast
  * as possible, which owing to the bottom-up recursive nature of ActorPath
- * is sorted by path elements FROM RIGHT TO LEFT, where RootActorPath >
+ * is sorted by path elements FROM RIGHT TO LEFT, where RootActorPath &gt;
  * ChildActorPath in case the number of elements is different.
  *
  * Two actor paths are compared equal when they have the same name and parent
@@ -150,6 +252,11 @@ sealed trait ActorPath extends Comparable[ActorPath] with Serializable {
  */
 @SerialVersionUID(1L)
 final case class RootActorPath(address: Address, name: String = "/") extends ActorPath {
+  require(
+    name.length == 1 || name.indexOf('/', 1) == -1,
+    "/ may only exist at the beginning of the root actors name, " +
+      "it is a path separator and is not legal in ActorPath names: [%s]" format name)
+  require(name.indexOf('#') == -1, "# is a fragment separator and is not legal in ActorPath names: [%s]" format name)
 
   override def parent: ActorPath = this
 
@@ -261,10 +368,10 @@ final class ChildActorPath private[akka] (val parent: ActorPath, val name: Strin
     appendUidFragment(sb).toString
   }
 
-  private def addressStringLengthDiff(addr: Address): Int = {
+  private def addressStringLengthDiff(address: Address): Int = {
     val r = root
     if (r.address.host.isDefined) 0
-    else (addr.toString.length - r.address.toString.length)
+    else (address.toString.length - r.address.toString.length)
   }
 
   /**

@@ -1,20 +1,28 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor.dungeon
 
 import scala.annotation.tailrec
-import akka.dispatch.{ MessageDispatcher, Mailbox, Envelope }
+import akka.AkkaException
+import akka.dispatch.{ Envelope, Mailbox }
 import akka.dispatch.sysmsg._
 import akka.event.Logging.Error
 import akka.util.Unsafe
 import akka.actor._
-import akka.serialization.SerializationExtension
-import scala.util.control.NonFatal
+import akka.serialization.{ DisabledJavaSerializer, SerializationExtension, Serializers }
+
+import scala.util.control.{ NoStackTrace, NonFatal }
 import scala.util.control.Exception.Catcher
 import akka.dispatch.MailboxType
 import akka.dispatch.ProducesMessageQueue
+import akka.dispatch.UnboundedMailbox
+
+@SerialVersionUID(1L)
+final case class SerializationCheckFailedException private (msg: Object, cause: Throwable)
+  extends AkkaException(s"Failed to serialize and deserialize message of type ${msg.getClass.getName} for testing. " +
+    "To avoid this error, either disable 'akka.actor.serialize-messages', mark the message with 'akka.actor.NoSerializationVerificationNeeded', or configure serialization to support this message", cause)
 
 private[akka] trait Dispatch { this: ActorCell ⇒
 
@@ -60,7 +68,8 @@ private[akka] trait Dispatch { this: ActorCell ⇒
         if (req isInstance mbox.messageQueue) Create(None)
         else {
           val gotType = if (mbox.messageQueue == null) "null" else mbox.messageQueue.getClass.getName
-          Create(Some(ActorInitializationException(self,
+          Create(Some(ActorInitializationException(
+            self,
             s"Actor [$self] requires mailbox type [$req] got [$gotType]")))
         }
       case _ ⇒ Create(None)
@@ -79,6 +88,16 @@ private[akka] trait Dispatch { this: ActorCell ⇒
     this
   }
 
+  final def initWithFailure(failure: Throwable): this.type = {
+    val mbox = dispatcher.createMailbox(this, new UnboundedMailbox)
+    swapMailbox(mbox)
+    mailbox.setActor(this)
+    // ➡➡➡ NEVER SEND THE SAME SYSTEM MESSAGE OBJECT TO TWO ACTORS ⬅⬅⬅
+    val createMessage = Create(Some(ActorInitializationException(self, "failure while creating ActorCell", failure)))
+    mailbox.systemEnqueue(self, createMessage)
+    this
+  }
+
   /**
    * Start this cell, i.e. attach it to the dispatcher.
    */
@@ -93,7 +112,11 @@ private[akka] trait Dispatch { this: ActorCell ⇒
       system.eventStream.publish(Error(e, self.path.toString, clazz(actor), "interrupted during message send"))
       Thread.currentThread.interrupt()
     case NonFatal(e) ⇒
-      system.eventStream.publish(Error(e, self.path.toString, clazz(actor), "swallowing exception during message send"))
+      val message = e match {
+        case n: NoStackTrace ⇒ "swallowing exception during message send: " + n.getMessage
+        case _               ⇒ "swallowing exception during message send" // stack trace includes message
+      }
+      system.eventStream.publish(Error(e, self.path.toString, clazz(actor), message))
   }
 
   // ➡➡➡ NEVER SEND THE SAME SYSTEM MESSAGE OBJECT TO TWO ACTORS ⬅⬅⬅
@@ -110,18 +133,47 @@ private[akka] trait Dispatch { this: ActorCell ⇒
 
   def sendMessage(msg: Envelope): Unit =
     try {
-      if (system.settings.SerializeAllMessages) {
-        val unwrapped = (msg.message match {
-          case DeadLetter(wrapped, _, _) ⇒ wrapped
-          case other                     ⇒ other
-        }).asInstanceOf[AnyRef]
-        if (!unwrapped.isInstanceOf[NoSerializationVerificationNeeded]) {
-          val s = SerializationExtension(system)
-          s.deserialize(s.serialize(unwrapped).get, unwrapped.getClass).get
-        }
-      }
-      dispatcher.dispatch(this, msg)
+      val msgToDispatch =
+        if (system.settings.SerializeAllMessages) serializeAndDeserialize(msg)
+        else msg
+
+      dispatcher.dispatch(this, msgToDispatch)
     } catch handleException
+
+  private def serializeAndDeserialize(envelope: Envelope): Envelope = {
+
+    val unwrappedMessage =
+      (envelope.message match {
+        case DeadLetter(wrapped, _, _) ⇒ wrapped
+        case other                     ⇒ other
+      }).asInstanceOf[AnyRef]
+
+    unwrappedMessage match {
+      case _: NoSerializationVerificationNeeded ⇒ envelope
+      case msg ⇒
+        val deserializedMsg = try {
+          serializeAndDeserializePayload(msg)
+        } catch {
+          case NonFatal(e) ⇒ throw SerializationCheckFailedException(msg, e)
+        }
+        envelope.message match {
+          case dl: DeadLetter ⇒ envelope.copy(message = dl.copy(message = deserializedMsg))
+          case _              ⇒ envelope.copy(message = deserializedMsg)
+        }
+    }
+  }
+
+  private def serializeAndDeserializePayload(obj: AnyRef): AnyRef = {
+    val s = SerializationExtension(system)
+    val serializer = s.findSerializerFor(obj)
+    if (serializer.isInstanceOf[DisabledJavaSerializer] && !s.shouldWarnAboutJavaSerializer(obj.getClass, serializer))
+      obj // skip check for known "local" messages
+    else {
+      val bytes = serializer.toBinary(obj)
+      val ms = Serializers.manifestFor(serializer, obj)
+      s.deserialize(bytes, serializer.identifier, ms).get
+    }
+  }
 
   override def sendSystemMessage(message: SystemMessage): Unit = try dispatcher.systemDispatch(this, message) catch handleException
 

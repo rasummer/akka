@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit
 
 import java.util.concurrent.atomic.AtomicInteger
@@ -9,7 +10,6 @@ import com.typesafe.config.Config
 import akka.dispatch.DispatcherPrerequisites
 import akka.dispatch.MessageDispatcher
 import akka.dispatch.MessageDispatcherConfigurator
-import akka.dispatch.UnboundedMailbox
 
 object CallingThreadDispatcherModelSpec {
   import ActorModelSpec._
@@ -42,7 +42,6 @@ object CallingThreadDispatcherModelSpec {
 
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class CallingThreadDispatcherModelSpec extends ActorModelSpec(CallingThreadDispatcherModelSpec.config) {
   import ActorModelSpec._
 

@@ -1,19 +1,18 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import scala.annotation.tailrec
 import scala.collection.immutable
-import scala.concurrent.forkjoin.ThreadLocalRandom
+import java.util.concurrent.ThreadLocalRandom
 import com.typesafe.config.Config
 import akka.actor.ActorCell
 import akka.actor.ActorRefWithCell
 import akka.actor.SupervisorStrategy
 import akka.dispatch.Dispatchers
-import akka.japi.Util.immutableSeq
 import akka.actor.ActorSystem
-import akka.actor.Props
 
 object SmallestMailboxRoutingLogic {
   def apply(): SmallestMailboxRoutingLogic = new SmallestMailboxRoutingLogic
@@ -47,11 +46,12 @@ class SmallestMailboxRoutingLogic extends RoutingLogic {
   // 4. An ActorRef with unknown mailbox size that isn't processing anything
   // 5. An ActorRef with a known mailbox size
   // 6. An ActorRef without any messages
-  @tailrec private def selectNext(targets: immutable.IndexedSeq[Routee],
-                                  proposedTarget: Routee = NoRoutee,
-                                  currentScore: Long = Long.MaxValue,
-                                  at: Int = 0,
-                                  deep: Boolean = false): Routee = {
+  @tailrec private def selectNext(
+    targets:        immutable.IndexedSeq[Routee],
+    proposedTarget: Routee                       = NoRoutee,
+    currentScore:   Long                         = Long.MaxValue,
+    at:             Int                          = 0,
+    deep:           Boolean                      = false): Routee = {
     if (targets.isEmpty)
       NoRoutee
     else if (at >= targets.size) {
@@ -174,16 +174,16 @@ class SmallestMailboxRoutingLogic extends RoutingLogic {
  */
 @SerialVersionUID(1L)
 final case class SmallestMailboxPool(
-  override val nrOfInstances: Int, override val resizer: Option[Resizer] = None,
+  val nrOfInstances: Int, override val resizer: Option[Resizer] = None,
   override val supervisorStrategy: SupervisorStrategy = Pool.defaultSupervisorStrategy,
-  override val routerDispatcher: String = Dispatchers.DefaultDispatcherId,
-  override val usePoolDispatcher: Boolean = false)
+  override val routerDispatcher:   String             = Dispatchers.DefaultDispatcherId,
+  override val usePoolDispatcher:  Boolean            = false)
   extends Pool with PoolOverrideUnsetConfig[SmallestMailboxPool] {
 
   def this(config: Config) =
     this(
       nrOfInstances = config.getInt("nr-of-instances"),
-      resizer = DefaultResizer.fromConfig(config),
+      resizer = Resizer.fromConfig(config),
       usePoolDispatcher = config.hasPath("pool-dispatcher"))
 
   /**
@@ -193,6 +193,8 @@ final case class SmallestMailboxPool(
   def this(nr: Int) = this(nrOfInstances = nr)
 
   override def createRouter(system: ActorSystem): Router = new Router(SmallestMailboxRoutingLogic())
+
+  override def nrOfInstances(sys: ActorSystem) = this.nrOfInstances
 
   /**
    * Setting the supervisor strategy to be used for the “head” Router actor.
@@ -211,7 +213,7 @@ final case class SmallestMailboxPool(
   def withDispatcher(dispatcherId: String): SmallestMailboxPool = copy(routerDispatcher = dispatcherId)
 
   /**
-   * Uses the resizer and/or the supervisor strategy of the given Routerconfig
+   * Uses the resizer and/or the supervisor strategy of the given RouterConfig
    * if this RouterConfig doesn't have one, i.e. the resizer defined in code is used if
    * resizer was not defined in config.
    */

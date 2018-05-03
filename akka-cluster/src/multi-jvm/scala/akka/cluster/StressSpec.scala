@@ -1,13 +1,14 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import language.postfixOps
 import scala.annotation.tailrec
 import scala.collection.immutable
 import scala.concurrent.duration._
-import scala.concurrent.forkjoin.ThreadLocalRandom
+import java.util.concurrent.ThreadLocalRandom
 import java.util.concurrent.atomic.AtomicReference
 import org.scalatest.BeforeAndAfterEach
 import com.typesafe.config.Config
@@ -23,12 +24,9 @@ import akka.actor.Props
 import akka.actor.RootActorPath
 import akka.actor.SupervisorStrategy._
 import akka.actor.Terminated
-import akka.cluster.ClusterEvent.ClusterMetricsChanged
 import akka.cluster.ClusterEvent.CurrentClusterState
 import akka.cluster.ClusterEvent.CurrentInternalStats
 import akka.cluster.ClusterEvent.MemberEvent
-import akka.cluster.StandardMetrics.Cpu
-import akka.cluster.StandardMetrics.HeapMemory
 import akka.remote.DefaultFailureDetectorRegistry
 import akka.remote.PhiAccrualFailureDetector
 import akka.remote.RemoteScope
@@ -42,6 +40,7 @@ import akka.actor.ActorIdentity
 import akka.util.Helpers.ConfigOps
 import akka.util.Helpers.Requiring
 import java.lang.management.ManagementFactory
+import akka.remote.RARP
 
 /**
  * This test is intended to be used as long running stress test
@@ -112,7 +111,6 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
       # (width * math.pow(width, levels) - 1) / (width - 1)
       tree-width = 4
       tree-levels = 4
-      report-metrics-interval = 10s
       # scale convergence within timeouts with this factor
       convergence-within-factor = 1.0
       # set to off to only test cluster membership
@@ -121,14 +119,21 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
 
     akka.actor.serialize-messages = off
     akka.actor.serialize-creators = off
-    akka.actor.provider = akka.cluster.ClusterActorRefProvider
+    akka.actor.provider = cluster
     akka.cluster {
+      failure-detector.acceptable-heartbeat-pause =  10s
       auto-down-unreachable-after = 1s
       publish-stats-interval = 1s
     }
     akka.loggers = ["akka.testkit.TestEventListener"]
     akka.loglevel = INFO
     akka.remote.log-remote-lifecycle-events = off
+
+    akka.remote.artery.advanced {
+      idle-cpu-level = 1
+      embedded-media-driver = off
+      aeron-dir = "target/aeron-StressSpec"
+    }
 
     akka.actor.default-dispatcher.fork-join-executor {
       parallelism-min = 8
@@ -138,7 +143,6 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
     akka.actor.deployment {
       /master-node-1/workers {
         router = round-robin-pool
-        nr-of-instances = 100
         cluster {
           enabled = on
           max-nr-of-instances-per-node = 1
@@ -147,7 +151,6 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
       }
       /master-node-2/workers {
         router = round-robin-group
-        nr-of-instances = 100
         routees.paths = ["/user/worker"]
         cluster {
           enabled = on
@@ -155,8 +158,7 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
         }
       }
       /master-node-3/workers = {
-        router = adaptive-pool
-        nr-of-instances = 100
+        router = round-robin-pool
         cluster {
           enabled = on
           max-nr-of-instances-per-node = 1
@@ -203,17 +205,18 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
     val expectedTestDuration = testConfig.getMillisDuration("expected-test-duration") * dFactor
     val treeWidth = getInt("tree-width")
     val treeLevels = getInt("tree-levels")
-    val reportMetricsInterval = testConfig.getMillisDuration("report-metrics-interval")
     val convergenceWithinFactor = getDouble("convergence-within-factor")
     val exerciseActors = getBoolean("exercise-actors")
 
-    require(numberOfSeedNodes + numberOfNodesJoiningToSeedNodesInitially + numberOfNodesJoiningOneByOneSmall +
-      numberOfNodesJoiningOneByOneLarge + numberOfNodesJoiningToOneNode + numberOfNodesJoiningToSeedNodes <= totalNumberOfNodes,
+    require(
+      numberOfSeedNodes + numberOfNodesJoiningToSeedNodesInitially + numberOfNodesJoiningOneByOneSmall +
+        numberOfNodesJoiningOneByOneLarge + numberOfNodesJoiningToOneNode + numberOfNodesJoiningToSeedNodes <= totalNumberOfNodes,
       s"specified number of joining nodes <= ${totalNumberOfNodes}")
 
     // don't shutdown the 3 nodes hosting the master actors
-    require(numberOfNodesLeavingOneByOneSmall + numberOfNodesLeavingOneByOneLarge + numberOfNodesLeaving +
-      numberOfNodesShutdownOneByOneSmall + numberOfNodesShutdownOneByOneLarge + numberOfNodesShutdown <= totalNumberOfNodes - 3,
+    require(
+      numberOfNodesLeavingOneByOneSmall + numberOfNodesLeavingOneByOneLarge + numberOfNodesLeaving +
+        numberOfNodesShutdownOneByOneSmall + numberOfNodesShutdownOneByOneLarge + numberOfNodesShutdown <= totalNumberOfNodes - 3,
       s"specified number of leaving/shutdown nodes <= ${totalNumberOfNodes - 3}")
 
     require(numberOfNodesJoinRemove <= totalNumberOfNodes, s"nr-of-nodes-join-remove should be <= ${totalNumberOfNodes}")
@@ -228,8 +231,8 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
   }
 
   final case class ClusterResult(
-    address: Address,
-    duration: Duration,
+    address:      Address,
+    duration:     Duration,
     clusterStats: GossipStats)
 
   final case class AggregatedClusterResult(title: String, duration: Duration, clusterStats: GossipStats)
@@ -241,46 +244,33 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
    * itself when expected results has been collected.
    */
   class ClusterResultAggregator(title: String, expectedResults: Int, settings: Settings) extends Actor with ActorLogging {
-    import settings.reportMetricsInterval
     import settings.infolog
-    val cluster = Cluster(context.system)
-    var reportTo: Option[ActorRef] = None
-    var results = Vector.empty[ClusterResult]
-    var nodeMetrics = Set.empty[NodeMetrics]
-    var phiValuesObservedByNode = {
+    private val cluster = Cluster(context.system)
+    private var reportTo: Option[ActorRef] = None
+    private var results = Vector.empty[ClusterResult]
+    private var phiValuesObservedByNode = {
       import akka.cluster.Member.addressOrdering
       immutable.SortedMap.empty[Address, immutable.SortedSet[PhiValue]]
     }
-    var clusterStatsObservedByNode = {
+    private var clusterStatsObservedByNode = {
       import akka.cluster.Member.addressOrdering
       immutable.SortedMap.empty[Address, CurrentInternalStats]
     }
 
     import context.dispatcher
-    val reportMetricsTask = context.system.scheduler.schedule(
-      reportMetricsInterval, reportMetricsInterval, self, ReportTick)
-
-    // subscribe to ClusterMetricsChanged, re-subscribe when restart
-    override def preStart(): Unit = cluster.subscribe(self, classOf[ClusterMetricsChanged])
-    override def postStop(): Unit = {
-      cluster.unsubscribe(self)
-      reportMetricsTask.cancel()
-      super.postStop()
-    }
 
     def receive = {
-      case ClusterMetricsChanged(clusterMetrics) ⇒ nodeMetrics = clusterMetrics
-      case PhiResult(from, phiValues)            ⇒ phiValuesObservedByNode += from -> phiValues
-      case StatsResult(from, stats)              ⇒ clusterStatsObservedByNode += from -> stats
+      case PhiResult(from, phiValues) ⇒ phiValuesObservedByNode += from → phiValues
+      case StatsResult(from, stats)   ⇒ clusterStatsObservedByNode += from → stats
       case ReportTick ⇒
         if (infolog)
-          log.info(s"[${title}] in progress\n${formatMetrics}\n\n${formatPhi}\n\n${formatStats}")
+          log.info(s"[${title}] in progress\n\n${formatPhi}\n\n${formatStats}")
       case r: ClusterResult ⇒
         results :+= r
         if (results.size == expectedResults) {
           val aggregated = AggregatedClusterResult(title, maxDuration, totalGossipStats)
           if (infolog)
-            log.info(s"[${title}] completed in [${aggregated.duration.toMillis}] ms\n${aggregated.clusterStats}\n${formatMetrics}\n\n${formatPhi}\n\n${formatStats}")
+            log.info(s"[${title}] completed in [${aggregated.duration.toMillis}] ms\n${aggregated.clusterStats}\n\n${formatPhi}\n\n${formatStats}")
           reportTo foreach { _ ! aggregated }
           context stop self
         }
@@ -291,27 +281,6 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
     def maxDuration = results.map(_.duration).max
 
     def totalGossipStats = results.foldLeft(GossipStats()) { _ :+ _.clusterStats }
-
-    def formatMetrics: String = {
-      import akka.cluster.Member.addressOrdering
-      (formatMetricsHeader +: (nodeMetrics.toSeq.sortBy(_.address) map formatMetricsLine)).mkString("\n")
-    }
-
-    def formatMetricsHeader: String = "[Node]\t[Heap (MB)]\t[CPU (%)]\t[Load]"
-
-    def formatMetricsLine(nodeMetrics: NodeMetrics): String = {
-      val heap = nodeMetrics match {
-        case HeapMemory(address, timestamp, used, committed, max) ⇒
-          (used.doubleValue / 1024 / 1024).form
-        case _ ⇒ ""
-      }
-      val cpuAndLoad = nodeMetrics match {
-        case Cpu(address, timestamp, loadOption, cpuOption, processors) ⇒
-          format(cpuOption) + "\t" + format(loadOption)
-        case _ ⇒ "N/A\tN/A"
-      }
-      s"${nodeMetrics.address}\t${heap}\t${cpuAndLoad}"
-    }
 
     def format(opt: Option[Double]) = opt match {
       case None    ⇒ "N/A"
@@ -411,7 +380,7 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
           val φ = phi(node)
           if (φ > 0 || cluster.failureDetector.isMonitoring(node)) {
             val aboveOne = if (!φ.isInfinite && φ > 1.0) 1 else 0
-            phiByNode += node -> PhiValue(node, previous.countAboveOne + aboveOne, previous.count + 1,
+            phiByNode += node → PhiValue(node, previous.countAboveOne + aboveOne, previous.count + 1,
               math.max(previous.max, φ))
           }
         }
@@ -438,9 +407,9 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
   }
 
   class StatsObserver extends Actor {
-    val cluster = Cluster(context.system)
-    var reportTo: Option[ActorRef] = None
-    var startStats: Option[GossipStats] = None
+    private val cluster = Cluster(context.system)
+    private var reportTo: Option[ActorRef] = None
+    private var startStats: Option[GossipStats] = None
 
     override def preStart(): Unit = cluster.subscribe(self, classOf[CurrentInternalStats])
     override def postStop(): Unit = cluster.unsubscribe(self)
@@ -560,7 +529,7 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
     }
 
     def send(job: Job): Unit = {
-      outstanding += job.id -> JobState(Deadline.now + retryTimeout, job)
+      outstanding += job.id → JobState(Deadline.now + retryTimeout, job)
       sendCounter += 1
       workers ! job
     }
@@ -575,7 +544,8 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
       case TreeJob(id, payload, idx, levels, width) ⇒
         // create the actors when first TreeJob message is received
         val totalActors = ((width * math.pow(width, levels) - 1) / (width - 1)).toInt
-        log.debug("Creating [{}] actors in a tree structure of [{}] levels and each actor has [{}] children",
+        log.debug(
+          "Creating [{}] actors in a tree structure of [{}] levels and each actor has [{}] children",
           totalActors, levels, width)
         val tree = context.actorOf(Props(classOf[TreeNode], levels, width), "tree")
         tree forward ((idx, SimpleJob(id, payload)))
@@ -632,7 +602,8 @@ private[cluster] object StressMultiJvmSpec extends MultiNodeConfig {
       case e: Exception     ⇒ context.children foreach { _ ! e }
       case GetChildrenCount ⇒ sender() ! ChildrenCount(context.children.size, restartCount)
       case Reset ⇒
-        require(context.children.isEmpty,
+        require(
+          context.children.isEmpty,
           s"ResetChildrenCount not allowed when children exists, [${context.children.size}]")
         restartCount = 0
     }
@@ -694,8 +665,11 @@ class StressMultiJvmNode12 extends StressSpec
 class StressMultiJvmNode13 extends StressSpec
 
 abstract class StressSpec
-  extends MultiNodeSpec(StressMultiJvmSpec)
-  with MultiNodeClusterSpec with BeforeAndAfterEach with ImplicitSender {
+  extends MultiNodeSpec({
+    // Aeron media driver must be started before ActorSystem
+    SharedMediaDriverSupport.startMediaDriver(StressMultiJvmSpec)
+    StressMultiJvmSpec
+  }) with MultiNodeClusterSpec with BeforeAndAfterEach with ImplicitSender {
 
   import StressMultiJvmSpec._
   import ClusterEvent._
@@ -720,6 +694,20 @@ abstract class StressSpec
     muteDeadLetters(classOf[SimpleJob], classOf[AggregatedClusterResult], SendBatch.getClass,
       classOf[StatsResult], classOf[PhiResult], RetryTick.getClass)(sys)
   }
+
+  override protected def afterTermination(): Unit = {
+    SharedMediaDriverSupport.stopMediaDriver(StressMultiJvmSpec)
+    super.afterTermination()
+  }
+
+  Runtime.getRuntime.addShutdownHook(new Thread {
+    override def run(): Unit = {
+      if (SharedMediaDriverSupport.isMediaDriverRunningByThisNode)
+        println("Abrupt exit of JVM without closing media driver. This should not happen and may cause test failure.")
+    }
+  })
+
+  def isArteryEnabled: Boolean = RARP(system).provider.remoteSettings.Artery.Enabled
 
   def jvmInfo(): String = {
     val runtime = ManagementFactory.getRuntimeMXBean
@@ -771,7 +759,8 @@ abstract class StressSpec
 
   def createResultAggregator(title: String, expectedResults: Int, includeInHistory: Boolean): Unit = {
     runOn(roles.head) {
-      val aggregator = system.actorOf(Props(classOf[ClusterResultAggregator], title, expectedResults, settings).withDeploy(Deploy.local),
+      val aggregator = system.actorOf(
+        Props(classOf[ClusterResultAggregator], title, expectedResults, settings).withDeploy(Deploy.local),
         name = "result" + step)
       if (includeInHistory && infolog) aggregator ! ReportTo(Some(clusterResultHistory))
       else aggregator ! ReportTo(None)
@@ -981,9 +970,9 @@ abstract class StressSpec
                 timeout = remainingOrDefault)
               awaitAllReachable()
             }
-            val nextAddresses = clusterView.members.map(_.address) -- usedAddresses
+            val nextAddresses = clusterView.members.map(_.address) diff usedAddresses
             runOn(usedRoles: _*) {
-              nextAddresses.size should be(numberOfNodesJoinRemove)
+              nextAddresses.size should ===(numberOfNodesJoinRemove)
             }
 
             enterBarrier("join-remove-" + step)
@@ -1020,13 +1009,14 @@ abstract class StressSpec
   def exerciseRouters(title: String, duration: FiniteDuration, batchInterval: FiniteDuration,
                       expectDroppedMessages: Boolean, tree: Boolean): Unit =
     within(duration + 10.seconds) {
-      nbrUsedRoles should be(totalNumberOfNodes)
+      nbrUsedRoles should ===(totalNumberOfNodes)
       createResultAggregator(title, expectedResults = nbrUsedRoles, includeInHistory = false)
 
       val (masterRoles, otherRoles) = roles.take(nbrUsedRoles).splitAt(3)
       runOn(masterRoles: _*) {
         reportResult {
-          val m = system.actorOf(Props(classOf[Master], settings, batchInterval, tree).withDeploy(Deploy.local),
+          val m = system.actorOf(
+            Props(classOf[Master], settings, batchInterval, tree).withDeploy(Deploy.local),
             name = masterName)
           m ! Begin
           import system.dispatcher
@@ -1037,7 +1027,7 @@ abstract class StressSpec
           workResult.sendCount should be > (0L)
           workResult.ackCount should be > (0L)
           if (!expectDroppedMessages)
-            workResult.retryCount should be(0)
+            workResult.retryCount should ===(0)
 
           enterBarrier("routers-done-" + step)
         }
@@ -1076,13 +1066,13 @@ abstract class StressSpec
               supervisor ! Props[RemoteChild].withDeploy(Deploy(scope = RemoteScope(address(r))))
             }
             supervisor ! GetChildrenCount
-            expectMsgType[ChildrenCount] should be(ChildrenCount(nbrUsedRoles, 0))
+            expectMsgType[ChildrenCount] should ===(ChildrenCount(nbrUsedRoles, 0))
 
             1 to 5 foreach { _ ⇒ supervisor ! new RuntimeException("Simulated exception") }
             awaitAssert {
               supervisor ! GetChildrenCount
               val c = expectMsgType[ChildrenCount]
-              c should be(ChildrenCount(nbrUsedRoles, 5 * nbrUsedRoles))
+              c should ===(ChildrenCount(nbrUsedRoles, 5 * nbrUsedRoles))
             }
 
             // after 5 restart attempts the children should be stopped
@@ -1091,7 +1081,7 @@ abstract class StressSpec
               supervisor ! GetChildrenCount
               val c = expectMsgType[ChildrenCount]
               // zero children
-              c should be(ChildrenCount(0, 6 * nbrUsedRoles))
+              c should ===(ChildrenCount(0, 6 * nbrUsedRoles))
             }
             supervisor ! Reset
 
@@ -1113,9 +1103,9 @@ abstract class StressSpec
   def idleGossip(title: String): Unit = {
     createResultAggregator(title, expectedResults = nbrUsedRoles, includeInHistory = true)
     reportResult {
-      clusterView.members.size should be(nbrUsedRoles)
+      clusterView.members.size should ===(nbrUsedRoles)
       Thread.sleep(idleGossipDuration.toMillis)
-      clusterView.members.size should be(nbrUsedRoles)
+      clusterView.members.size should ===(nbrUsedRoles)
     }
     awaitClusterResult()
   }
@@ -1131,6 +1121,10 @@ abstract class StressSpec
       }
       enterBarrier("after-" + step)
     }
+
+    // FIXME issue #21810
+    // note: there must be one test step before pending, otherwise afterTermination will not run
+    if (isArteryEnabled) pending
 
     "join seed nodes" taggedAs LongRunningTest in within(30 seconds) {
 
@@ -1154,7 +1148,8 @@ abstract class StressSpec
 
     "start routers that are running while nodes are joining" taggedAs LongRunningTest in {
       runOn(roles.take(3): _*) {
-        system.actorOf(Props(classOf[Master], settings, settings.workBatchInterval, false).withDeploy(Deploy.local),
+        system.actorOf(
+          Props(classOf[Master], settings, settings.workBatchInterval, false).withDeploy(Deploy.local),
           name = masterName) ! Begin
       }
     }
@@ -1190,7 +1185,7 @@ abstract class StressSpec
             case Some(m) ⇒
               m.tell(End, testActor)
               val workResult = awaitWorkResult(m)
-              workResult.retryCount should be(0)
+              workResult.retryCount should ===(0)
               workResult.sendCount should be > (0L)
               workResult.ackCount should be > (0L)
             case None ⇒ fail("master not running")
@@ -1252,7 +1247,8 @@ abstract class StressSpec
     "start routers that are running while nodes are removed" taggedAs LongRunningTest in {
       if (exerciseActors) {
         runOn(roles.take(3): _*) {
-          system.actorOf(Props(classOf[Master], settings, settings.workBatchInterval, false).withDeploy(Deploy.local),
+          system.actorOf(
+            Props(classOf[Master], settings, settings.workBatchInterval, false).withDeploy(Deploy.local),
             name = masterName) ! Begin
         }
       }
@@ -1314,5 +1310,4 @@ abstract class StressSpec
       enterBarrier("after-" + step)
     }
   }
-
 }

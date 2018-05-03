@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit
 
 import java.io._
@@ -12,7 +13,6 @@ import org.scalatest.Matchers
 import scala.concurrent.duration._
 import scala.concurrent.Await
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class CoronerSpec extends WordSpec with Matchers {
 
   private def captureOutput[A](f: PrintStream ⇒ A): (A, String) = {
@@ -40,7 +40,7 @@ class CoronerSpec extends WordSpec with Matchers {
         coroner.cancel()
         Await.ready(coroner, 1.seconds)
       })
-      report should be("")
+      report should ===("")
     }
 
     "display thread counts if enabled" in {

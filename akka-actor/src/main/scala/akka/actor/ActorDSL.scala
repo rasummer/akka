@@ -1,19 +1,14 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
 
-import scala.collection.mutable.Queue
 import scala.concurrent.duration._
 import akka.pattern.ask
 import scala.concurrent.Await
-import akka.util.Timeout
 import akka.util.Helpers.ConfigOps
-import scala.collection.immutable.TreeSet
-import java.util.concurrent.TimeoutException
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.TimeUnit
+import akka.util.JavaDurationConverters._
 
 /**
  * This object contains elements which make writing actors and related code
@@ -71,7 +66,10 @@ import java.util.concurrent.TimeUnit
  * <b>Note:</b> If you want to use an `Act with Stash`, you should use the
  * `ActWithStash` trait in order to have the actor get the necessary deque-based
  * mailbox setting.
+ *
+ * @deprecated Use the normal `actorOf` methods defined on `ActorSystem` and `ActorContext` to create Actors instead.
  */
+@deprecated("deprecated Use the normal `actorOf` methods defined on `ActorSystem` and `ActorContext` to create Actors instead.", since = "2.5.0")
 object ActorDSL extends dsl.Inbox with dsl.Creators {
 
   protected object Extension extends ExtensionId[Extension] with ExtensionIdProvider {
@@ -88,22 +86,26 @@ object ActorDSL extends dsl.Inbox with dsl.Creators {
 
   protected class Extension(val system: ExtendedActorSystem) extends akka.actor.Extension with InboxExtension {
 
-    val boss = system.systemActorOf(Props(
+    private case class MkChild(props: Props, name: String) extends NoSerializationVerificationNeeded
+    private val boss = system.systemActorOf(Props(
       new Actor {
-        def receive = { case any ⇒ sender() ! any }
+        def receive = {
+          case MkChild(props, name) ⇒ sender() ! context.actorOf(props, name)
+          case any                  ⇒ sender() ! any
+        }
       }), "dsl").asInstanceOf[RepointableActorRef]
-
-    {
-      implicit val timeout = system.settings.CreationTimeout
-      if (Await.result(boss ? "OK", system.settings.CreationTimeout.duration) != "OK")
-        throw new IllegalStateException("Creation of boss actor did not succeed!")
-    }
 
     lazy val config = system.settings.config.getConfig("akka.actor.dsl")
 
     val DSLDefaultTimeout = config.getMillisDuration("default-timeout")
 
-    def mkChild(p: Props, name: String) = boss.underlying.asInstanceOf[ActorCell].attachChild(p, name, systemService = true)
+    def mkChild(p: Props, name: String): ActorRef =
+      if (boss.isStarted)
+        boss.underlying.asInstanceOf[ActorCell].attachChild(p, name, systemService = true)
+      else {
+        implicit val timeout = system.settings.CreationTimeout
+        Await.result(boss ? MkChild(p, name), timeout.duration).asInstanceOf[ActorRef]
+      }
   }
 
 }
@@ -123,6 +125,15 @@ abstract class Inbox {
    */
   @throws(classOf[java.util.concurrent.TimeoutException])
   def receive(max: FiniteDuration): Any
+
+  /**
+   * Receive the next message from this Inbox. This call will return immediately
+   * if the internal actor previously received a message, or it will block for
+   * up to the specified duration to await reception of a message. If no message
+   * is received a [[java.util.concurrent.TimeoutException]] will be raised.
+   */
+  @throws(classOf[java.util.concurrent.TimeoutException])
+  def receive(max: java.time.Duration): Any = receive(max.asScala)
 
   /**
    * Have the internal actor watch the target actor. When the target actor

@@ -1,16 +1,14 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.testkit
 
 import language.postfixOps
 
-import org.scalatest.WordSpec
-import org.scalatest.Matchers
-import org.scalatest.{ BeforeAndAfterEach, WordSpec }
 import akka.actor._
-import scala.concurrent.{ Future, Await }
 import scala.concurrent.duration._
-import akka.pattern.ask
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class JavaTestKitSpec extends AkkaSpec with DefaultTimeout {
 
   "JavaTestKit" must {
@@ -39,10 +37,10 @@ class JavaTestKitSpec extends AkkaSpec with DefaultTimeout {
 
         watch(actor)
         system stop actor
-        expectTerminated(actor).existenceConfirmed should be(true)
+        expectTerminated(actor).existenceConfirmed should ===(true)
 
         watch(actor)
-        expectTerminated(5 seconds, actor).actor should be(actor)
+        expectTerminated(5 seconds, actor).actor should ===(actor)
       }
     }
 

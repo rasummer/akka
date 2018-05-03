@@ -1,28 +1,27 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
 import language.existentials
-
 import scala.util.control.NonFatal
-import scala.util.{ Try, Success, Failure }
+import scala.util.{ Failure, Success, Try }
 import scala.collection.immutable
 import scala.concurrent.duration.FiniteDuration
-import scala.concurrent.duration.Duration
 import scala.reflect.ClassTag
 import scala.concurrent.{ Await, Future }
 import akka.japi.{ Creator, Option ⇒ JOption }
 import akka.japi.Util.{ immutableSeq, immutableSingletonSeq }
 import akka.util.Timeout
 import akka.util.Reflect.instantiator
-import akka.serialization.{ JavaSerializer, SerializationExtension }
+import akka.serialization.{ JavaSerializer, SerializationExtension, Serializers }
 import akka.dispatch._
 import java.util.concurrent.atomic.{ AtomicReference ⇒ AtomVar }
 import java.util.concurrent.TimeoutException
-import java.util.concurrent.TimeUnit.MILLISECONDS
 import java.io.ObjectStreamException
-import java.lang.reflect.{ InvocationTargetException, Method, InvocationHandler, Proxy }
+import java.lang.reflect.{ InvocationHandler, InvocationTargetException, Method, Proxy }
+
 import akka.pattern.AskTimeoutException
 
 /**
@@ -59,7 +58,7 @@ trait TypedActorFactory {
   }
 
   /**
-   * Returns wether the supplied AnyRef is a TypedActor proxy or not
+   * Returns whether the supplied AnyRef is a TypedActor proxy or not
    */
   def isTypedActor(proxyOrNot: AnyRef): Boolean
 
@@ -138,7 +137,7 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
     /**
      * Invokes the Method on the supplied instance
      *
-     * @throws the underlying exception if there's an InvocationTargetException thrown on the invocation
+     * Throws the underlying exception if there's an InvocationTargetException thrown on the invocation.
      */
     def apply(instance: AnyRef): AnyRef = try {
       parameters match {
@@ -153,11 +152,11 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
       case ps if ps.length == 0 ⇒ SerializedMethodCall(method.getDeclaringClass, method.getName, method.getParameterTypes, Array())
       case ps ⇒
         val serialization = SerializationExtension(akka.serialization.JavaSerializer.currentSystem.value)
-        val serializedParameters = Array.ofDim[(Int, Class[_], Array[Byte])](ps.length)
+        val serializedParameters = new Array[(Int, String, Array[Byte])](ps.length)
         for (i ← 0 until ps.length) {
           val p = ps(i)
           val s = serialization.findSerializerFor(p)
-          val m = if (s.includeManifest) p.getClass else null
+          val m = Serializers.manifestFor(s, p)
           serializedParameters(i) = (s.identifier, m, s toBinary parameters(i)) //Mutable for the sake of sanity
         }
 
@@ -170,7 +169,7 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
    *
    * Represents the serialized form of a MethodCall, uses readResolve and writeReplace to marshall the call
    */
-  private[akka] final case class SerializedMethodCall(ownerType: Class[_], methodName: String, parameterTypes: Array[Class[_]], serializedParameters: Array[(Int, Class[_], Array[Byte])]) {
+  private[akka] final case class SerializedMethodCall(ownerType: Class[_], methodName: String, parameterTypes: Array[Class[_]], serializedParameters: Array[(Int, String, Array[Byte])]) {
 
     //TODO implement writeObject and readObject to serialize
     //TODO Possible optimization is to special encode the parameter-types to conserve space
@@ -184,11 +183,10 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
         case null               ⇒ null
         case a if a.length == 0 ⇒ Array[AnyRef]()
         case a ⇒
-          val deserializedParameters: Array[AnyRef] = Array.ofDim[AnyRef](a.length) //Mutable for the sake of sanity
+          val deserializedParameters: Array[AnyRef] = new Array[AnyRef](a.length) //Mutable for the sake of sanity
           for (i ← 0 until a.length) {
             val (sId, manifest, bytes) = a(i)
-            deserializedParameters(i) =
-              serialization.serializerByIdentity(sId).fromBinary(bytes, Option(manifest))
+            deserializedParameters(i) = serialization.deserialize(bytes, sId, manifest).get
           }
 
           deserializedParameters
@@ -217,8 +215,9 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
    *
    * NEVER EXPOSE "this" to someone else, always use "self[TypeOfInterface(s)]"
    *
-   * @throws IllegalStateException if called outside of the scope of a method on this TypedActor
-   * @throws ClassCastException if the supplied type T isn't the type of the proxy associated with this TypedActor
+   * Throws IllegalStateException if called outside of the scope of a method on this TypedActor.
+   *
+   * Throws ClassCastException if the supplied type T isn't the type of the proxy associated with this TypedActor.
    */
   def self[T <: AnyRef] = selfReference.get.asInstanceOf[T] match {
     case null ⇒ throw new IllegalStateException("Calling TypedActor.self outside of a TypedActor implementation method!")
@@ -293,7 +292,7 @@ object TypedActor extends ExtensionId[TypedActorExtension] with ExtensionIdProvi
       }
     }
 
-    protected def withContext[T](unitOfWork: ⇒ T): T = {
+    protected def withContext[U](unitOfWork: ⇒ U): U = {
       TypedActor.selfReference set proxyVar.get
       TypedActor.currentContext set context
       try unitOfWork finally {
@@ -524,11 +523,11 @@ object TypedProps {
 @SerialVersionUID(1L)
 final case class TypedProps[T <: AnyRef] protected[TypedProps] (
   interfaces: immutable.Seq[Class[_]],
-  creator: () ⇒ T,
-  dispatcher: String = TypedProps.defaultDispatcherId,
-  deploy: Deploy = Props.defaultDeploy,
-  timeout: Option[Timeout] = TypedProps.defaultTimeout,
-  loader: Option[ClassLoader] = TypedProps.defaultLoader) {
+  creator:    () ⇒ T,
+  dispatcher: String                  = TypedProps.defaultDispatcherId,
+  deploy:     Deploy                  = Props.defaultDeploy,
+  timeout:    Option[Timeout]         = TypedProps.defaultTimeout,
+  loader:     Option[ClassLoader]     = TypedProps.defaultLoader) {
 
   /**
    * Uses the supplied class as the factory for the TypedActor implementation,
@@ -537,7 +536,8 @@ final case class TypedProps[T <: AnyRef] protected[TypedProps] (
    * appended in the sequence of interfaces.
    */
   def this(implementation: Class[T]) =
-    this(interfaces = TypedProps.extractInterfaces(implementation),
+    this(
+      interfaces = TypedProps.extractInterfaces(implementation),
       creator = instantiator(implementation))
 
   /**
@@ -547,7 +547,8 @@ final case class TypedProps[T <: AnyRef] protected[TypedProps] (
    * appended in the sequence of interfaces.
    */
   def this(interface: Class[_ >: T], implementation: Creator[T]) =
-    this(interfaces = TypedProps.extractInterfaces(interface),
+    this(
+      interfaces = TypedProps.extractInterfaces(interface),
       creator = implementation.create _)
 
   /**
@@ -557,7 +558,8 @@ final case class TypedProps[T <: AnyRef] protected[TypedProps] (
    * appended in the sequence of interfaces.
    */
   def this(interface: Class[_ >: T], implementation: Class[T]) =
-    this(interfaces = TypedProps.extractInterfaces(interface),
+    this(
+      interfaces = TypedProps.extractInterfaces(interface),
       creator = instantiator(implementation))
 
   /**
@@ -653,7 +655,7 @@ class TypedActorExtension(val system: ExtendedActorSystem) extends TypedActorFac
   }
 
   /**
-   * Returns wether the supplied AnyRef is a TypedActor proxy or not
+   * Returns whether the supplied AnyRef is a TypedActor proxy or not
    */
   def isTypedActor(proxyOrNot: AnyRef): Boolean = invocationHandlerFor(proxyOrNot) ne null
 
@@ -674,7 +676,7 @@ class TypedActorExtension(val system: ExtendedActorSystem) extends TypedActorFac
       proxy
     } else {
       proxyVar set proxy // Chicken and egg situation we needed to solve, set the proxy so that we can set the self-reference inside each receive
-      actorVar set actorRef //Make sure the InvocationHandler gets ahold of the actor reference, this is not a problem since the proxy hasn't escaped this method yet
+      actorVar set actorRef //Make sure the InvocationHandler gets a hold of the actor reference, this is not a problem since the proxy hasn't escaped this method yet
       proxyVar.get
     }
   }

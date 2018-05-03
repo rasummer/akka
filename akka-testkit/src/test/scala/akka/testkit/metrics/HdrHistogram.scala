@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit.metrics
 
 import com.codahale.metrics.Metric
@@ -10,15 +11,15 @@ import org.{ HdrHistogram ⇒ hdr }
  * Adapts Gil Tene's HdrHistogram to Metric's Metric interface.
  *
  * @param highestTrackableValue The highest value to be tracked by the histogram. Must be a positive
- *                              integer that is >= 2.
+ *                              integer that is &gt;= 2.
  * @param numberOfSignificantValueDigits The number of significant decimal digits to which the histogram will
  *                                       maintain value resolution and separation. Must be a non-negative
  *                                       integer between 0 and 5.
  */
 private[akka] class HdrHistogram(
-  highestTrackableValue: Long,
+  highestTrackableValue:          Long,
   numberOfSignificantValueDigits: Int,
-  val unit: String = "")
+  val unit:                       String = "")
   extends Metric {
 
   private val hist = new hdr.Histogram(highestTrackableValue, numberOfSignificantValueDigits)
@@ -41,8 +42,8 @@ private[akka] class HdrHistogram(
 
   private def wrapHistogramOutOfBoundsException(value: Long, ex: ArrayIndexOutOfBoundsException): IllegalArgumentException =
     new IllegalArgumentException(s"Given value $value can not be stored in this histogram " +
-      s"(min: ${hist.getLowestTrackableValue}, max: ${hist.getHighestTrackableValue}})", ex)
+      s"(min: ${hist.getLowestDiscernibleValue}, max: ${hist.getHighestTrackableValue}})", ex)
 
-  def getData = hist.copy().getHistogramData
+  def getData = hist.copy()
 
 }

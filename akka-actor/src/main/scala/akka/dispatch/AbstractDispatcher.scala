@@ -1,31 +1,30 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.dispatch
 
 import java.util.concurrent._
-import akka.event.Logging.{ Debug, Error, LogEventException }
+import java.{ util ⇒ ju }
+
 import akka.actor._
+import akka.dispatch.affinity.AffinityPoolConfigurator
 import akka.dispatch.sysmsg._
 import akka.event.EventStream
-import com.typesafe.config.{ ConfigFactory, Config }
-import akka.util.{ Unsafe, Index }
+import akka.event.Logging.{ Debug, Error, LogEventException }
+import akka.util.{ Index, Unsafe }
+import com.typesafe.config.Config
+
 import scala.annotation.tailrec
-import scala.concurrent.forkjoin.{ ForkJoinTask, ForkJoinPool }
-import scala.concurrent.duration.Duration
-import scala.concurrent.ExecutionContext
-import scala.concurrent.ExecutionContextExecutor
-import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.{ ExecutionContext, ExecutionContextExecutor }
+import scala.concurrent.duration.{ Duration, FiniteDuration }
 import scala.util.control.NonFatal
-import scala.util.Try
-import java.{ util ⇒ ju }
 
 final case class Envelope private (val message: Any, val sender: ActorRef)
 
 object Envelope {
   def apply(message: Any, sender: ActorRef, system: ActorSystem): Envelope = {
-    if (message == null) throw new InvalidMessageException("Message is null")
+    if (message == null) throw InvalidMessageException("Message is null")
     new Envelope(message, if (sender ne Actor.noSender) sender else system.deadLetters)
   }
 }
@@ -61,7 +60,9 @@ private[akka] object MessageDispatcher {
   // dispatcher debugging helper using println (see below)
   // since this is a compile-time constant, scalac will elide code behind if (MessageDispatcher.debug) (RK checked with 2.9.1)
   final val debug = false // Deliberately without type ascription to make it a compile-time constant
-  lazy val actors = new Index[MessageDispatcher, ActorRef](16, _ compareTo _)
+  lazy val actors = new Index[MessageDispatcher, ActorRef](16, new ju.Comparator[ActorRef] {
+    override def compare(a: ActorRef, b: ActorRef): Int = a.compareTo(b)
+  })
   def printActors(): Unit =
     if (debug) {
       for {
@@ -84,8 +85,8 @@ private[akka] object MessageDispatcher {
 
 abstract class MessageDispatcher(val configurator: MessageDispatcherConfigurator) extends AbstractMessageDispatcher with BatchingExecutor with ExecutionContextExecutor {
 
-  import MessageDispatcher._
   import AbstractMessageDispatcher.{ inhabitantsOffset, shutdownScheduleOffset }
+  import MessageDispatcher._
   import configurator.prerequisites
 
   val mailboxes = prerequisites.mailboxes
@@ -94,17 +95,17 @@ abstract class MessageDispatcher(val configurator: MessageDispatcherConfigurator
   @volatile private[this] var _inhabitantsDoNotCallMeDirectly: Long = _ // DO NOT TOUCH!
   @volatile private[this] var _shutdownScheduleDoNotCallMeDirectly: Int = _ // DO NOT TOUCH!
 
-  @tailrec private final def addInhabitants(add: Long): Long = {
-    val c = inhabitants
-    val r = c + add
-    if (r < 0) {
+  private final def addInhabitants(add: Long): Long = {
+    val old = Unsafe.instance.getAndAddLong(this, inhabitantsOffset, add)
+    val ret = old + add
+    if (ret < 0) {
       // We haven't succeeded in decreasing the inhabitants yet but the simple fact that we're trying to
       // go below zero means that there is an imbalance and we might as well throw the exception
       val e = new IllegalStateException("ACTOR SYSTEM CORRUPTED!!! A dispatcher can't have less than 0 inhabitants!")
       reportFailure(e)
       throw e
     }
-    if (Unsafe.instance.compareAndSwapLong(this, inhabitantsOffset, c, r)) r else addInhabitants(add)
+    ret
   }
 
   final def inhabitants: Long = Unsafe.instance.getLongVolatile(this, inhabitantsOffset)
@@ -174,7 +175,13 @@ abstract class MessageDispatcher(val configurator: MessageDispatcherConfigurator
       override def execute(runnable: Runnable): Unit = runnable.run()
       override def reportFailure(t: Throwable): Unit = MessageDispatcher.this.reportFailure(t)
     }) catch {
-      case _: IllegalStateException ⇒ shutdown()
+      case _: IllegalStateException ⇒
+        shutdown()
+        // Since there is no scheduler anymore, restore the state to UNSCHEDULED.
+        // When this dispatcher is used again,
+        // shutdown is only attempted if the state is UNSCHEDULED
+        // (as per ifSensibleToDoSoThenScheduleShutdown above)
+        updateShutdownSchedule(SCHEDULED, UNSCHEDULED)
     }
   }
 
@@ -322,10 +329,12 @@ abstract class MessageDispatcherConfigurator(_config: Config, val prerequisites:
     def configurator(executor: String): ExecutorServiceConfigurator = executor match {
       case null | "" | "fork-join-executor" ⇒ new ForkJoinExecutorConfigurator(config.getConfig("fork-join-executor"), prerequisites)
       case "thread-pool-executor"           ⇒ new ThreadPoolExecutorConfigurator(config.getConfig("thread-pool-executor"), prerequisites)
+      case "affinity-pool-executor"         ⇒ new AffinityPoolConfigurator(config.getConfig("affinity-pool-executor"), prerequisites)
+
       case fqcn ⇒
         val args = List(
-          classOf[Config] -> config,
-          classOf[DispatcherPrerequisites] -> prerequisites)
+          classOf[Config] → config,
+          classOf[DispatcherPrerequisites] → prerequisites)
         prerequisites.dynamicAccess.createInstanceFor[ExecutorServiceConfigurator](fqcn, args).recover({
           case exception ⇒ throw new IllegalArgumentException(
             ("""Cannot instantiate ExecutorServiceConfigurator ("executor = [%s]"), defined in [%s],
@@ -347,87 +356,31 @@ class ThreadPoolExecutorConfigurator(config: Config, prerequisites: DispatcherPr
 
   protected def createThreadPoolConfigBuilder(config: Config, prerequisites: DispatcherPrerequisites): ThreadPoolConfigBuilder = {
     import akka.util.Helpers.ConfigOps
-    ThreadPoolConfigBuilder(ThreadPoolConfig())
-      .setKeepAliveTime(config.getMillisDuration("keep-alive-time"))
-      .setAllowCoreThreadTimeout(config getBoolean "allow-core-timeout")
-      .setCorePoolSizeFromFactor(config getInt "core-pool-size-min", config getDouble "core-pool-size-factor", config getInt "core-pool-size-max")
-      .setMaxPoolSizeFromFactor(config getInt "max-pool-size-min", config getDouble "max-pool-size-factor", config getInt "max-pool-size-max")
-      .configure(
-        Some(config getInt "task-queue-size") flatMap {
-          case size if size > 0 ⇒
-            Some(config getString "task-queue-type") map {
-              case "array"       ⇒ ThreadPoolConfig.arrayBlockingQueue(size, false) //TODO config fairness?
-              case "" | "linked" ⇒ ThreadPoolConfig.linkedBlockingQueue(size)
-              case x             ⇒ throw new IllegalArgumentException("[%s] is not a valid task-queue-type [array|linked]!" format x)
-            } map { qf ⇒ (q: ThreadPoolConfigBuilder) ⇒ q.setQueueFactory(qf) }
-          case _ ⇒ None
-        })
+    val builder =
+      ThreadPoolConfigBuilder(ThreadPoolConfig())
+        .setKeepAliveTime(config.getMillisDuration("keep-alive-time"))
+        .setAllowCoreThreadTimeout(config getBoolean "allow-core-timeout")
+        .configure(
+          Some(config getInt "task-queue-size") flatMap {
+            case size if size > 0 ⇒
+              Some(config getString "task-queue-type") map {
+                case "array"       ⇒ ThreadPoolConfig.arrayBlockingQueue(size, false) //TODO config fairness?
+                case "" | "linked" ⇒ ThreadPoolConfig.linkedBlockingQueue(size)
+                case x             ⇒ throw new IllegalArgumentException("[%s] is not a valid task-queue-type [array|linked]!" format x)
+              } map { qf ⇒ (q: ThreadPoolConfigBuilder) ⇒ q.setQueueFactory(qf) }
+            case _ ⇒ None
+          })
+
+    if (config.getString("fixed-pool-size") == "off")
+      builder
+        .setCorePoolSizeFromFactor(config getInt "core-pool-size-min", config getDouble "core-pool-size-factor", config getInt "core-pool-size-max")
+        .setMaxPoolSizeFromFactor(config getInt "max-pool-size-min", config getDouble "max-pool-size-factor", config getInt "max-pool-size-max")
+    else
+      builder.setFixedPoolSize(config.getInt("fixed-pool-size"))
   }
 
   def createExecutorServiceFactory(id: String, threadFactory: ThreadFactory): ExecutorServiceFactory =
     threadPoolConfig.createExecutorServiceFactory(id, threadFactory)
-}
-
-object ForkJoinExecutorConfigurator {
-
-  /**
-   * INTERNAL AKKA USAGE ONLY
-   */
-  final class AkkaForkJoinPool(parallelism: Int,
-                               threadFactory: ForkJoinPool.ForkJoinWorkerThreadFactory,
-                               unhandledExceptionHandler: Thread.UncaughtExceptionHandler)
-    extends ForkJoinPool(parallelism, threadFactory, unhandledExceptionHandler, true) with LoadMetrics {
-    override def execute(r: Runnable): Unit =
-      if (r eq null) throw new NullPointerException else super.execute(new AkkaForkJoinTask(r))
-
-    def atFullThrottle(): Boolean = this.getActiveThreadCount() >= this.getParallelism()
-  }
-
-  /**
-   * INTERNAL AKKA USAGE ONLY
-   */
-  @SerialVersionUID(1L)
-  final class AkkaForkJoinTask(runnable: Runnable) extends ForkJoinTask[Unit] {
-    override def getRawResult(): Unit = ()
-    override def setRawResult(unit: Unit): Unit = ()
-    final override def exec(): Boolean = try { runnable.run(); true } catch {
-      case anything: Throwable ⇒
-        val t = Thread.currentThread
-        t.getUncaughtExceptionHandler match {
-          case null ⇒
-          case some ⇒ some.uncaughtException(t, anything)
-        }
-        throw anything
-    }
-  }
-}
-
-class ForkJoinExecutorConfigurator(config: Config, prerequisites: DispatcherPrerequisites) extends ExecutorServiceConfigurator(config, prerequisites) {
-  import ForkJoinExecutorConfigurator._
-
-  def validate(t: ThreadFactory): ForkJoinPool.ForkJoinWorkerThreadFactory = t match {
-    case correct: ForkJoinPool.ForkJoinWorkerThreadFactory ⇒ correct
-    case x ⇒ throw new IllegalStateException("The prerequisites for the ForkJoinExecutorConfigurator is a ForkJoinPool.ForkJoinWorkerThreadFactory!")
-  }
-
-  class ForkJoinExecutorServiceFactory(val threadFactory: ForkJoinPool.ForkJoinWorkerThreadFactory,
-                                       val parallelism: Int) extends ExecutorServiceFactory {
-    def createExecutorService: ExecutorService = new AkkaForkJoinPool(parallelism, threadFactory, MonitorableThreadFactory.doNothing)
-  }
-  final def createExecutorServiceFactory(id: String, threadFactory: ThreadFactory): ExecutorServiceFactory = {
-    val tf = threadFactory match {
-      case m: MonitorableThreadFactory ⇒
-        // add the dispatcher id to the thread names
-        m.withName(m.name + "-" + id)
-      case other ⇒ other
-    }
-    new ForkJoinExecutorServiceFactory(
-      validate(tf),
-      ThreadPoolConfig.scaledPoolSize(
-        config.getInt("parallelism-min"),
-        config.getDouble("parallelism-factor"),
-        config.getInt("parallelism-max")))
-  }
 }
 
 class DefaultExecutorServiceConfigurator(config: Config, prerequisites: DispatcherPrerequisites, fallback: ExecutorServiceConfigurator) extends ExecutorServiceConfigurator(config, prerequisites) {

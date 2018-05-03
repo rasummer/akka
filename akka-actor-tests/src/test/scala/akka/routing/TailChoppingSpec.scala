@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import java.util.concurrent.atomic.AtomicInteger
@@ -27,7 +28,6 @@ object TailChoppingSpec {
     }), "Actor:" + id)
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class TailChoppingSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
   import TailChoppingSpec._
 
@@ -70,8 +70,8 @@ class TailChoppingSpec extends AkkaSpec with DefaultTimeout with ImplicitSender 
 
       Await.ready(doneLatch, TestLatch.DefaultTimeout)
 
-      counter1.get should be(1)
-      counter2.get should be(1)
+      counter1.get should ===(1)
+      counter2.get should ===(1)
     }
 
     "return response from second actor after inactivity from first one" in {

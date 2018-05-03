@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.io
 
 import akka.actor.Props
@@ -47,11 +48,11 @@ private[io] class UdpManager(udp: UdpExt) extends SelectionHandler.SelectorBased
 
   def receive = workerForCommandHandler {
     case b: Bind ⇒
-      val commander = sender() // cache because we create a function that will run asyncly
+      val commander = sender() // cache because we create a function that will run asynchly
       (registry ⇒ Props(classOf[UdpListener], udp, registry, commander, b))
 
     case SimpleSender(options) ⇒
-      val commander = sender() // cache because we create a function that will run asyncly
+      val commander = sender() // cache because we create a function that will run asynchly
       (registry ⇒ Props(classOf[UdpSender], udp, registry, commander, options))
   }
 

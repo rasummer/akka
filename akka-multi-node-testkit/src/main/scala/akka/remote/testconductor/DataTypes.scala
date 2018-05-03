@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.testconductor
 
 import language.implicitConversions
@@ -9,7 +10,6 @@ import org.jboss.netty.handler.codec.oneone.OneToOneEncoder
 import org.jboss.netty.channel.ChannelHandlerContext
 import org.jboss.netty.channel.Channel
 import akka.remote.testconductor.{ TestConductorProtocol ⇒ TCP }
-import com.google.protobuf.Message
 import akka.actor.Address
 import org.jboss.netty.handler.codec.oneone.OneToOneDecoder
 import scala.concurrent.duration._
@@ -76,8 +76,8 @@ private[akka] class MsgEncoder extends OneToOneEncoder {
     case x: NetworkOp ⇒
       val w = TCP.Wrapper.newBuilder
       x match {
-        case Hello(name, addr) ⇒
-          w.setHello(TCP.Hello.newBuilder.setName(name).setAddress(addr))
+        case Hello(name, address) ⇒
+          w.setHello(TCP.Hello.newBuilder.setName(name).setAddress(address))
         case EnterBarrier(name, timeout) ⇒
           val barrier = TCP.EnterBarrier.newBuilder.setName(name)
           timeout foreach (t ⇒ barrier.setTimeout(t.toNanos))
@@ -102,8 +102,8 @@ private[akka] class MsgEncoder extends OneToOneEncoder {
           w.setFailure(TCP.InjectFailure.newBuilder.setFailure(TCP.FailType.ShutdownAbrupt))
         case GetAddress(node) ⇒
           w.setAddr(TCP.AddressRequest.newBuilder.setNode(node.name))
-        case AddressReply(node, addr) ⇒
-          w.setAddr(TCP.AddressRequest.newBuilder.setNode(node.name).setAddr(addr))
+        case AddressReply(node, address) ⇒
+          w.setAddr(TCP.AddressRequest.newBuilder.setNode(node.name).setAddr(address))
         case _: Done ⇒
           w.setDone("")
       }
@@ -134,7 +134,8 @@ private[akka] class MsgDecoder extends OneToOneDecoder {
           case BarrierOp.Succeeded ⇒ BarrierResult(barrier.getName, true)
           case BarrierOp.Failed    ⇒ BarrierResult(barrier.getName, false)
           case BarrierOp.Fail      ⇒ FailBarrier(barrier.getName)
-          case BarrierOp.Enter ⇒ EnterBarrier(barrier.getName,
+          case BarrierOp.Enter ⇒ EnterBarrier(
+            barrier.getName,
             if (barrier.hasTimeout) Option(Duration.fromNanos(barrier.getTimeout)) else None)
         }
       } else if (w.hasFailure) {

@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit.metrics
 
 import com.codahale.metrics._
@@ -8,7 +9,7 @@ import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.TimeUnit._
 
 /**
- * Specialised "one-shot" Timer.
+ * Specialized "one-shot" Timer.
  * Given a known number of operations performed within a time span (to be measured) it displays the average time one operation took.
  *
  * Please note that this is a *very coarse* estimation; The gain though is that we do not have to perform the counting inside of the measured thing (we can adding in tight loops).

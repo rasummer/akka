@@ -1,12 +1,11 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit.metrics
 
 import org.scalatest._
 import com.typesafe.config.ConfigFactory
-import scala.util.Random
-import org.scalautils.Tolerance
 
 class MetricsKitSpec extends WordSpec with Matchers with BeforeAndAfter with BeforeAndAfterAll
   with MetricsKit {

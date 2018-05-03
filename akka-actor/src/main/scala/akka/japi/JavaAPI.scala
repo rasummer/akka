@@ -1,20 +1,23 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.japi
 
-import language.implicitConversions
+import java.util.Collections.{ emptyList, singletonList }
+
+import akka.util.Collections.EmptyImmutableSeq
 
 import scala.collection.immutable
+import scala.language.implicitConversions
 import scala.reflect.ClassTag
-import scala.util.control.NoStackTrace
 import scala.runtime.AbstractPartialFunction
-import akka.util.Collections.EmptyImmutableSeq
-import java.util.Collections.{ emptyList, singletonList }
+import scala.util.control.NoStackTrace
 
 /**
  * A Function interface. Used to create first-class-functions is Java.
+ *
+ * This class is kept for compatibility, but for future API's please prefer [[akka.japi.function.Function]].
  */
 trait Function[T, R] {
   @throws(classOf[Exception])
@@ -23,6 +26,8 @@ trait Function[T, R] {
 
 /**
  * A Function interface. Used to create 2-arg first-class-functions is Java.
+ *
+ * This class is kept for compatibility, but for future API's please prefer [[akka.japi.function.Function2]].
  */
 trait Function2[T1, T2, R] {
   @throws(classOf[Exception])
@@ -31,6 +36,8 @@ trait Function2[T1, T2, R] {
 
 /**
  * A Procedure is like a Function, but it doesn't produce a return value.
+ *
+ * This class is kept for compatibility, but for future API's please prefer [[akka.japi.function.Procedure]].
  */
 trait Procedure[T] {
   @throws(classOf[Exception])
@@ -39,6 +46,8 @@ trait Procedure[T] {
 
 /**
  * An executable piece of code that takes no parameters and doesn't return any value.
+ *
+ * This class is kept for compatibility, but for future API's please prefer [[akka.japi.function.Effect]].
  */
 trait Effect {
   @throws(classOf[Exception])
@@ -47,19 +56,31 @@ trait Effect {
 
 /**
  * Java API: Defines a criteria and determines whether the parameter meets this criteria.
+ *
+ * This class is kept for compatibility, but for future API's please prefer [[akka.japi.function.Predicate]].
  */
 trait Predicate[T] {
   def test(param: T): Boolean
 }
 
 /**
- * Java API: Represents a tuple of two elements.
+ * Java API
+ * Represents a pair (tuple) of two elements.
+ *
+ * Additional tuple types for 3 to 22 values are defined in the `akka.japi.tuple` package, e.g. [[akka.japi.tuple.Tuple3]].
  */
 @SerialVersionUID(1L)
-case class Pair[A, B](first: A, second: B)
+case class Pair[A, B](first: A, second: B) {
+  def toScala: (A, B) = (first, second)
+}
+object Pair {
+  def create[A, B](first: A, second: B): Pair[A, B] = new Pair(first, second)
+}
 
 /**
  * A constructor/factory, takes no parameters but creates a new value of type T every call.
+ *
+ * This class is kept for compatibility, but for future API's please prefer [[akka.japi.function.Creator]].
  */
 @SerialVersionUID(1L)
 trait Creator[T] extends Serializable {
@@ -231,9 +252,21 @@ object Util {
 
   def immutableSingletonSeq[T](value: T): immutable.Seq[T] = value :: Nil
 
+  def javaArrayList[T](seq: Seq[T]): java.util.List[T] = {
+    val size = seq.size
+    val l = new java.util.ArrayList[T](size)
+    seq.foreach(l.add) // TODO could be optimised based on type of Seq
+    l
+  }
+
   /**
    * Turns an [[java.lang.Iterable]] into an immutable Scala IndexedSeq (by copying it).
    */
   def immutableIndexedSeq[T](iterable: java.lang.Iterable[T]): immutable.IndexedSeq[T] =
     immutableSeq(iterable).toVector
+
+  // TODO in case we decide to pull in scala-java8-compat methods below could be removed - https://github.com/akka/akka/issues/16247
+
+  def option[T](jOption: java.util.Optional[T]): scala.Option[T] =
+    scala.Option(jOption.orElse(null.asInstanceOf[T]))
 }

@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
 import language.postfixOps
@@ -11,7 +12,6 @@ import akka.testkit.TestEvent._
 import scala.concurrent.Await
 import akka.pattern.ask
 import scala.concurrent.duration._
-import com.typesafe.config.{ Config, ConfigFactory }
 import org.scalatest.BeforeAndAfterEach
 import org.scalatest.junit.JUnitSuiteLike
 
@@ -102,7 +102,6 @@ object ActorWithStashSpec {
 
 class JavaActorWithStashSpec extends StashJavaAPI with JUnitSuiteLike
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class ActorWithStashSpec extends AkkaSpec(ActorWithStashSpec.testConf) with DefaultTimeout with BeforeAndAfterEach {
   import ActorWithStashSpec._
 
@@ -119,7 +118,7 @@ class ActorWithStashSpec extends AkkaSpec(ActorWithStashSpec.testConf) with Defa
       stasher ! "bye"
       stasher ! "hello"
       state.finished.await
-      state.s should be("bye")
+      state.s should ===("bye")
     }
 
     "support protocols" in {

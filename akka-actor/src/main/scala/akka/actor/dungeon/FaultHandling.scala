@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor.dungeon
@@ -66,13 +66,13 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
           // if the actor fails in preRestart, we can do nothing but log it: it’s best-effort
           if (failedActor.context ne null) failedActor.aroundPreRestart(cause, optionalMessage)
         } catch handleNonFatalOrInterruptedException { e ⇒
-          val ex = new PreRestartException(self, e, cause, optionalMessage)
+          val ex = PreRestartException(self, e, cause, optionalMessage)
           publish(Error(ex, self.path.toString, clazz(failedActor), e.getMessage))
         } finally {
-          clearActorFields(failedActor)
+          clearActorFields(failedActor, recreate = true)
         }
       }
-      assert(mailbox.isSuspended, "mailbox must be suspended during restart, status=" + mailbox.status)
+      assert(mailbox.isSuspended, "mailbox must be suspended during restart, status=" + mailbox.currentStatus)
       if (!setChildrenTerminationReason(ChildrenContainer.Recreation(cause))) finishRecreate(cause, failedActor)
     } else {
       // need to keep that suspend counter balanced
@@ -118,7 +118,7 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
    * Do create the actor in response to a failure.
    */
   protected def faultCreate(): Unit = {
-    assert(mailbox.isSuspended, "mailbox must be suspended during failed creation, status=" + mailbox.status)
+    assert(mailbox.isSuspended, "mailbox must be suspended during failed creation, status=" + mailbox.currentStatus)
     assert(perpetrator == self)
 
     setReceiveTimeout(Duration.Undefined)
@@ -211,13 +211,14 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
     catch handleNonFatalOrInterruptedException { e ⇒ publish(Error(e, self.path.toString, clazz(a), e.getMessage)) }
     finally try dispatcher.detach(this)
     finally try parent.sendSystemMessage(DeathWatchNotification(self, existenceConfirmed = true, addressTerminated = false))
+    finally try stopFunctionRefs()
     finally try tellWatchersWeDied()
     finally try unwatchWatchedActors(a) // stay here as we expect an emergency stop from handleInvokeFailure
     finally {
       if (system.settings.DebugLifecycle)
         publish(Debug(self.path.toString, clazz(a), "stopped"))
 
-      clearActorFields(a)
+      clearActorFields(a, recreate = false)
       clearActorCellFields(this)
       actor = null
     }
@@ -245,8 +246,8 @@ private[akka] trait FaultHandling { this: ActorCell ⇒
           publish(Error(e, self.path.toString, clazz(freshActor), "restarting " + child))
         })
     } catch handleNonFatalOrInterruptedException { e ⇒
-      clearActorFields(actor) // in order to prevent preRestart() from happening again
-      handleInvokeFailure(survivors, new PostRestartException(self, e, cause))
+      clearActorFields(actor, recreate = false) // in order to prevent preRestart() from happening again
+      handleInvokeFailure(survivors, PostRestartException(self, e, cause))
     }
   }
 

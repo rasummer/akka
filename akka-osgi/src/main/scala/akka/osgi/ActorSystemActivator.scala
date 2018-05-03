@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.osgi
 
 import akka.actor.ActorSystem
@@ -63,7 +64,7 @@ abstract class ActorSystemActivator extends BundleActivator {
     val filter = s"(objectclass=${classOf[LogService].getName})"
     context.addServiceListener(logServiceListner, filter)
 
-    //Small trick to create an event if the service is registred before this start listing for
+    //Small trick to create an event if the service is registered before this start listing for
     Option(context.getServiceReference(classOf[LogService].getName)).foreach(x ⇒ {
       logServiceListner.serviceChanged(new ServiceEvent(ServiceEvent.REGISTERED, x))
     })
@@ -103,7 +104,7 @@ abstract class ActorSystemActivator extends BundleActivator {
   }
 
   /**
-   * By default, the [[akka.actor.ActorSystem]] name will be set to `bundle-<bundle id>-ActorSystem`.  Override this
+   * By default, the [[akka.actor.ActorSystem]] name will be set to `bundle-&lt;bundle id&gt;-ActorSystem`.  Override this
    * method to define another name for your [[akka.actor.ActorSystem]] instance.
    *
    * @param context the bundle context

@@ -1,16 +1,15 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
 
-import scala.concurrent.duration.Duration
-import com.typesafe.config._
-import akka.routing._
-import akka.japi.Util.immutableSeq
-import java.util.concurrent.{ TimeUnit }
-import akka.util.WildcardTree
 import java.util.concurrent.atomic.AtomicReference
+
+import akka.routing._
+import akka.util.WildcardIndex
+import com.typesafe.config._
+
 import scala.annotation.tailrec
 
 object Deploy {
@@ -36,12 +35,12 @@ object Deploy {
  */
 @SerialVersionUID(2L)
 final case class Deploy(
-  path: String = "",
-  config: Config = ConfigFactory.empty,
+  path:         String       = "",
+  config:       Config       = ConfigFactory.empty,
   routerConfig: RouterConfig = NoRouter,
-  scope: Scope = NoScopeGiven,
-  dispatcher: String = Deploy.NoDispatcherGiven,
-  mailbox: String = Deploy.NoMailboxGiven) {
+  scope:        Scope        = NoScopeGiven,
+  dispatcher:   String       = Deploy.NoDispatcherGiven,
+  mailbox:      String       = Deploy.NoMailboxGiven) {
 
   /**
    * Java API to create a Deploy with the given RouterConfig
@@ -61,7 +60,7 @@ final case class Deploy(
   /**
    * Do a merge between this and the other Deploy, where values from “this” take
    * precedence. The “path” of the other Deploy is not taken into account. All
-   * other members are merged using ``<X>.withFallback(other.<X>)``.
+   * other members are merged using `X.withFallback(other.X)`.
    */
   def withFallback(other: Deploy): Deploy = {
     Deploy(
@@ -133,12 +132,12 @@ private[akka] class Deployer(val settings: ActorSystem.Settings, val dynamicAcce
   import scala.collection.JavaConverters._
 
   private val resizerEnabled: Config = ConfigFactory.parseString("resizer.enabled=on")
-  private val deployments = new AtomicReference(WildcardTree[Deploy]())
+  private val deployments = new AtomicReference(WildcardIndex[Deploy]())
   private val config = settings.config.getConfig("akka.actor.deployment")
   protected val default = config.getConfig("default")
   val routerTypeMapping: Map[String, String] =
     settings.config.getConfig("akka.actor.router.type-mapping").root.unwrapped.asScala.collect {
-      case (key, value: String) ⇒ (key -> value)
+      case (key, value: String) ⇒ (key → value)
     }.toMap
 
   config.root.asScala flatMap {
@@ -147,25 +146,18 @@ private[akka] class Deployer(val settings: ActorSystem.Settings, val dynamicAcce
     case _                          ⇒ None
   } foreach deploy
 
-  def lookup(path: ActorPath): Option[Deploy] = lookup(path.elements.drop(1).iterator)
+  def lookup(path: ActorPath): Option[Deploy] = lookup(path.elements.drop(1))
 
-  def lookup(path: Iterable[String]): Option[Deploy] = lookup(path.iterator)
-
-  def lookup(path: Iterator[String]): Option[Deploy] = deployments.get().find(path).data
+  def lookup(path: Iterable[String]): Option[Deploy] = deployments.get().find(path)
 
   def deploy(d: Deploy): Unit = {
-    @tailrec def add(path: Array[String], d: Deploy, w: WildcardTree[Deploy] = deployments.get): Unit = {
-      import ActorPath.ElementRegex
-      for (i ← 0 until path.length) path(i) match {
-        case "" ⇒
-          throw new InvalidActorNameException(s"actor name in deployment [${d.path}] must not be empty")
-        case ElementRegex() ⇒ // ok
-        case name ⇒
-          throw new InvalidActorNameException(
-            s"illegal actor name [$name] in deployment [${d.path}], must conform to $ElementRegex")
+    @tailrec def add(path: Array[String], d: Deploy, w: WildcardIndex[Deploy] = deployments.get): Unit = {
+      for (i ← path.indices) path(i) match {
+        case "" ⇒ throw InvalidActorNameException(s"Actor name in deployment [${d.path}] must not be empty")
+        case el ⇒ ActorPath.validatePathElement(el, fullPath = d.path)
       }
 
-      if (!deployments.compareAndSet(w, w.insert(path.iterator, d))) add(path, d)
+      if (!deployments.compareAndSet(w, w.insert(path, d))) add(path, d)
     }
 
     add(d.path.split("/").drop(1), d)
@@ -204,8 +196,8 @@ private[akka] class Deployer(val settings: ActorSystem.Settings, val dynamicAcce
             s"[${args(0)._1.getName}] and optional [${args(1)._1.getName}] parameter", cause)
 
       // first try with Config param, and then with Config and DynamicAccess parameters
-      val args1 = List(classOf[Config] -> deployment2)
-      val args2 = List(classOf[Config] -> deployment2, classOf[DynamicAccess] -> dynamicAccess)
+      val args1 = List(classOf[Config] → deployment2)
+      val args2 = List(classOf[Config] → deployment2, classOf[DynamicAccess] → dynamicAccess)
       dynamicAccess.createInstanceFor[RouterConfig](fqn, args1).recover({
         case e @ (_: IllegalArgumentException | _: ConfigException) ⇒ throw e
         case e: NoSuchMethodException ⇒

@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.contrib.pattern;
@@ -12,6 +12,7 @@ import akka.testkit.AkkaJUnitActorSystemResource;
 import org.junit.ClassRule;
 import org.junit.Test;
 
+import org.scalatest.junit.JUnitSuite;
 import scala.concurrent.duration.Duration;
 import akka.testkit.TestProbe;
 
@@ -21,7 +22,7 @@ import akka.contrib.pattern.ReliableProxy;
 
 //#import
 
-public class ReliableProxyTest {
+public class ReliableProxyTest extends JUnitSuite {
 
   @ClassRule
   public static AkkaJUnitActorSystemResource actorSystemResource =
@@ -30,7 +31,7 @@ public class ReliableProxyTest {
   private final ActorSystem system = actorSystemResource.getSystem();
 
   static//#demo-proxy
-  public class ProxyParent extends UntypedActor {
+  public class ProxyParent extends AbstractActor {
     private final ActorRef proxy;
 
     public ProxyParent(ActorPath targetPath) {
@@ -39,17 +40,20 @@ public class ReliableProxyTest {
               Duration.create(100, TimeUnit.MILLISECONDS)));
     }
 
-    public void onReceive(Object msg) {
-      if ("hello".equals(msg)) {
-        proxy.tell("world!", getSelf());
-      }
+    @Override
+    public Receive createReceive() {
+      return receiveBuilder()
+        .matchEquals("hello", m -> {
+          proxy.tell("world!", self());
+        })
+        .build();
     }
   }
 
   //#demo-proxy
 
   static//#demo-transition
-  public class ProxyTransitionParent extends UntypedActor {
+  public class ProxyTransitionParent extends AbstractActor {
     private final ActorRef proxy;
     private ActorRef client = null;
 
@@ -60,22 +64,24 @@ public class ReliableProxyTest {
       proxy.tell(new FSM.SubscribeTransitionCallBack(getSelf()), getSelf());
     }
 
-    public void onReceive(Object msg) {
-      if ("hello".equals(msg)) {
-        proxy.tell("world!", getSelf());
-        client = getSender();
-      } else if (msg instanceof FSM.CurrentState<?>) {
-        // get initial state
-      } else if (msg instanceof FSM.Transition<?>) {
-        @SuppressWarnings("unchecked")
-        final FSM.Transition<ReliableProxy.State> transition =
-          (FSM.Transition<ReliableProxy.State>) msg;
-        assert transition.fsmRef().equals(proxy);
-        if (transition.from().equals(ReliableProxy.active()) &&
-                transition.to().equals(ReliableProxy.idle())) {
-          client.tell("done", getSelf());
-        }
-      }
+    @Override
+    public Receive createReceive() {
+      return receiveBuilder()
+        .matchEquals("hello", message -> {
+          proxy.tell("world!", self());
+          client = sender();
+        })
+        .matchUnchecked(FSM.CurrentState.class, (FSM.CurrentState<ReliableProxy.State> state) -> {
+          // get initial state
+        })
+        .matchUnchecked(FSM.Transition.class, (FSM.Transition<ReliableProxy.State> transition) -> {
+          assert transition.fsmRef().equals(proxy);
+          if (transition.from().equals(ReliableProxy.active()) &&
+            transition.to().equals(ReliableProxy.idle())) {
+            client.tell("done", self());
+          }
+        })
+        .build();
     }
   }
 

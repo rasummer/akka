@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.contrib.pattern
@@ -10,6 +10,7 @@ import scala.concurrent.duration._
 import scala.util.Try
 import java.util.concurrent.TimeUnit
 
+@deprecated("Use AtLeastOnceDelivery instead", "2.5.0")
 object ReliableProxy {
   /**
    * Scala API Props.  Arguments are detailed in the [[akka.contrib.pattern.ReliableProxy]]
@@ -171,24 +172,24 @@ import ReliableProxy._
  *
  * This actor is an [[akka.actor.FSM]], hence it offers the service of
  * transition callbacks to those actors which subscribe using the
- * ``SubscribeTransitionCallBack`` and ``UnsubscribeTransitionCallBack``
+ * `SubscribeTransitionCallBack` and `UnsubscribeTransitionCallBack`
  * messages; see [[akka.actor.FSM]] for more documentation. The proxy will
- * transition into [[ReliableProxy.Active]] state when ACKs
- * are outstanding and return to the [[ReliableProxy.Idle]]
+ * transition into `ReliableProxy.Active` state when ACKs
+ * are outstanding and return to the `ReliableProxy.Idle`
  * state when every message send so far has been confirmed by the peer end-point.
  *
- * The initial state of the proxy is [[ReliableProxy.Connecting]]. In this state the
+ * The initial state of the proxy is `ReliableProxy.Connecting`. In this state the
  * proxy will repeatedly send [[akka.actor.Identify]] messages to `ActorSelection(targetPath)`
  * in order to obtain a new `ActorRef` for the target. When an [[akka.actor.ActorIdentity]]
  * for the target is received a new tunnel will be created, a [[ReliableProxy.TargetChanged]]
  * message containing the target `ActorRef` will be sent to the proxy's transition subscribers
- * and the proxy will transition into either the [[ReliableProxy.Idle]] or [[ReliableProxy.Active]]
+ * and the proxy will transition into either the `ReliableProxy.Idle` or `ReliableProxy.Active`
  * state, depending if there are any outstanding messages that need to be delivered.  If
  * `maxConnectAttempts` is defined this actor will stop itself after `Identify` is sent
  * `maxConnectAttempts` times.
  *
  * While in the `Idle` or `Active` states, if a communication failure causes the tunnel to
- * terminate via Remote Deathwatch the proxy will transition into the [[ReliableProxy.Connecting]]
+ * terminate via Remote Deathwatch the proxy will transition into the `ReliableProxy.Connecting`
  * state as described above.  After reconnecting `TargetChanged` will be sent only if the target
  * `ActorRef` has changed.
  *
@@ -211,8 +212,8 @@ import ReliableProxy._
  * See the constructor below for the arguments for this actor.  However, prefer using
  * [[akka.contrib.pattern.ReliableProxy#props]] to this actor's constructor.
  *
- * @param targetPath is the ``ActorPath`` to the actor to which all messages will be forwarded.
- *   ``targetPath`` can point to a local or remote actor, but the tunnel endpoint will be
+ * @param targetPath is the `ActorPath` to the actor to which all messages will be forwarded.
+ *   `targetPath` can point to a local or remote actor, but the tunnel endpoint will be
  *   deployed remotely on the node where the target actor lives.
  * @param retryAfter is the ACK timeout after which all outstanding messages
  *   will be resent. There is no limit on the queue size or the number of retries.
@@ -224,9 +225,11 @@ import ReliableProxy._
  * @param maxConnectAttempts &nbsp;is an optional maximum number of attempts to connect to the
  *   target actor. Use `None` for no limit. If `reconnectAfter` is `None` this value is ignored.
  */
+@deprecated("Use AtLeastOnceDelivery instead", "2.5.0")
 class ReliableProxy(targetPath: ActorPath, retryAfter: FiniteDuration,
                     reconnectAfter: Option[FiniteDuration], maxConnectAttempts: Option[Int])
   extends Actor with LoggingFSM[State, Vector[Message]] with ReliableProxyDebugLogging {
+  import FSM.`→`
 
   var tunnel: ActorRef = _
   var currentSerial: Int = 0
@@ -284,9 +287,9 @@ class ReliableProxy(targetPath: ActorPath, retryAfter: FiniteDuration,
   }
 
   onTransition {
-    case _ -> Active     ⇒ scheduleTick()
-    case Active -> Idle  ⇒ cancelTimer(resendTimer)
-    case _ -> Connecting ⇒ scheduleReconnectTick()
+    case _ → Active     ⇒ scheduleTick()
+    case Active → Idle  ⇒ cancelTimer(resendTimer)
+    case _ → Connecting ⇒ scheduleReconnectTick()
   }
 
   when(Active) {

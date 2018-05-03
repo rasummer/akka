@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.remote
@@ -13,8 +13,8 @@ import akka.ConfigurationException
  * Interface for a registry of Akka failure detectors. New resources are implicitly registered when heartbeat is first
  * called with the resource given as parameter.
  *
- * @tparam A
- *   The type of the key that identifies a resource to be monitored by a failure detector
+ * type parameter A:
+ *  - The type of the key that identifies a resource to be monitored by a failure detector
  */
 trait FailureDetectorRegistry[A] {
 
@@ -32,7 +32,7 @@ trait FailureDetectorRegistry[A] {
 
   /**
    * Records a heartbeat for a resource. If the resource is not yet registered (i.e. this is the first heartbeat) then
-   * it is automatially registered.
+   * it is automatically registered.
    */
   def heartbeat(resource: A): Unit
 
@@ -56,7 +56,7 @@ private[akka] object FailureDetectorLoader {
 
   /**
    * Loads and instantiates a given [[FailureDetector]] implementation. The class to be loaded must have a constructor
-   * that accepts a [[com.typesafe.config.Config]] and an [[EventStream]] parameter. Will throw ConfigurationException
+   * that accepts a [[com.typesafe.config.Config]] and an [[akka.event.EventStream]] parameter. Will throw ConfigurationException
    * if the implementation cannot be loaded.
    *
    * @param fqcn Fully qualified class name of the implementation to be loaded.
@@ -67,17 +67,17 @@ private[akka] object FailureDetectorLoader {
   def load(fqcn: String, config: Config, system: ActorSystem): FailureDetector = {
     system.asInstanceOf[ExtendedActorSystem].dynamicAccess.createInstanceFor[FailureDetector](
       fqcn, List(
-        classOf[Config] -> config,
-        classOf[EventStream] -> system.eventStream)).recover({
-        case e ⇒ throw new ConfigurationException(
-          s"Could not create custom failure detector [$fqcn] due to: ${e.toString}", e)
-      }).get
+      classOf[Config] → config,
+      classOf[EventStream] → system.eventStream)).recover({
+      case e ⇒ throw new ConfigurationException(
+        s"Could not create custom failure detector [$fqcn] due to: ${e.toString}", e)
+    }).get
   }
 
   /**
    * Loads and instantiates a given [[FailureDetector]] implementation. The class to be loaded must have a constructor
-   * that accepts a [[com.typesafe.config.Config]] and an [[EventStream]] parameter. Will throw ConfigurationException
-   * if the implementation cannot be loaded. Use [[FailureDetectorLoader#load]] if no implicit [[ActorContext]] is
+   * that accepts a [[com.typesafe.config.Config]] and an [[akka.event.EventStream]] parameter. Will throw ConfigurationException
+   * if the implementation cannot be loaded. Use [[FailureDetectorLoader#load]] if no implicit [[akka.actor.ActorContext]] is
    * available.
    *
    * @param fqcn Fully qualified class name of the implementation to be loaded.

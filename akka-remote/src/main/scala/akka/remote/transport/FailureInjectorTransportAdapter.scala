@@ -1,20 +1,21 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.transport
 
 import FailureInjectorTransportAdapter._
 import akka.AkkaException
 import akka.actor.{ Address, ExtendedActorSystem }
-import akka.event.Logging
+import akka.event.{ Logging, LoggingAdapter }
 import akka.remote.transport.AssociationHandle.{ HandleEvent, HandleEventListener }
 import akka.remote.transport.Transport._
 import akka.util.ByteString
 import java.util.concurrent.ConcurrentHashMap
-import scala.concurrent.forkjoin.ThreadLocalRandom
+import java.util.concurrent.ThreadLocalRandom
+
 import scala.concurrent.{ Future, Promise }
 import scala.util.control.NoStackTrace
-import scala.util.Try
 
 @SerialVersionUID(1L)
 final case class FailureInjectorException(msg: String) extends AkkaException(msg) with NoStackTrace
@@ -57,7 +58,7 @@ private[remote] class FailureInjectorTransportAdapter(wrappedTransport: Transpor
   extends AbstractTransportAdapter(wrappedTransport)(extendedSystem.dispatcher) with AssociationEventListener {
 
   private def rng = ThreadLocalRandom.current()
-  private val log = Logging(extendedSystem, "FailureInjector (gremlin)")
+  private val log = Logging(extendedSystem, getClass.getName)
   private val shouldDebugLog: Boolean = extendedSystem.settings.config.getBoolean("akka.remote.gremlin.debug")
 
   @volatile private var upstreamListener: Option[AssociationEventListener] = None
@@ -78,14 +79,15 @@ private[remote] class FailureInjectorTransportAdapter(wrappedTransport: Transpor
     case _ ⇒ wrappedTransport.managementCommand(cmd)
   }
 
-  protected def interceptListen(listenAddress: Address,
-                                listenerFuture: Future[AssociationEventListener]): Future[AssociationEventListener] = {
+  protected def interceptListen(
+    listenAddress:  Address,
+    listenerFuture: Future[AssociationEventListener]): Future[AssociationEventListener] = {
     log.warning("FailureInjectorTransport is active on this system. Gremlins might munch your packets.")
-    listenerFuture.onSuccess {
+    listenerFuture.foreach {
       // Side effecting: As this class is not an actor, the only way to safely modify state is through volatile vars.
       // Listen is called only during the initialization of the stack, and upstreamListener is not read before this
       // finishes.
-      case listener: AssociationEventListener ⇒ upstreamListener = Some(listener)
+      listener ⇒ upstreamListener = Some(listener)
     }
     Future.successful(this)
   }
@@ -141,8 +143,9 @@ private[remote] class FailureInjectorTransportAdapter(wrappedTransport: Transpor
 /**
  * INTERNAL API
  */
-private[remote] final case class FailureInjectorHandle(_wrappedHandle: AssociationHandle,
-                                                       private val gremlinAdapter: FailureInjectorTransportAdapter)
+private[remote] final case class FailureInjectorHandle(
+  _wrappedHandle:             AssociationHandle,
+  private val gremlinAdapter: FailureInjectorTransportAdapter)
   extends AbstractTransportAdapterHandle(_wrappedHandle, FailureInjectorSchemeIdentifier)
   with HandleEventListener {
   import gremlinAdapter.extendedSystem.dispatcher
@@ -150,8 +153,8 @@ private[remote] final case class FailureInjectorHandle(_wrappedHandle: Associati
   @volatile private var upstreamListener: HandleEventListener = null
 
   override val readHandlerPromise: Promise[HandleEventListener] = Promise()
-  readHandlerPromise.future.onSuccess {
-    case listener: HandleEventListener ⇒
+  readHandlerPromise.future.foreach {
+    listener ⇒
       upstreamListener = listener
       wrappedHandle.readHandlerPromise.success(this)
   }
@@ -160,7 +163,11 @@ private[remote] final case class FailureInjectorHandle(_wrappedHandle: Associati
     if (!gremlinAdapter.shouldDropOutbound(wrappedHandle.remoteAddress, payload, "handler.write")) wrappedHandle.write(payload)
     else true
 
-  override def disassociate(): Unit = wrappedHandle.disassociate()
+  override def disassociate(reason: String, log: LoggingAdapter): Unit =
+    wrappedHandle.disassociate(reason, log)
+
+  override def disassociate(): Unit =
+    wrappedHandle.disassociate()
 
   override def notify(ev: HandleEvent): Unit =
     if (!gremlinAdapter.shouldDropInbound(wrappedHandle.remoteAddress, ev, "handler.notify"))

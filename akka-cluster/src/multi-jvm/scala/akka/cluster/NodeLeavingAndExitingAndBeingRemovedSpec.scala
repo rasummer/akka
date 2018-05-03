@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import scala.collection.immutable.SortedSet
@@ -15,9 +16,8 @@ object NodeLeavingAndExitingAndBeingRemovedMultiJvmSpec extends MultiNodeConfig 
   val second = role("second")
   val third = role("third")
 
-  commonConfig(debugConfig(on = false).withFallback(ConfigFactory.parseString(
-    "akka.cluster.auto-down-unreachable-after = 0s")).
-    withFallback(MultiNodeClusterSpec.clusterConfigWithFailureDetectorPuppet))
+  commonConfig(debugConfig(on = false)
+    .withFallback(MultiNodeClusterSpec.clusterConfigWithFailureDetectorPuppet))
 }
 
 class NodeLeavingAndExitingAndBeingRemovedMultiJvmNode1 extends NodeLeavingAndExitingAndBeingRemovedSpec
@@ -36,7 +36,7 @@ abstract class NodeLeavingAndExitingAndBeingRemovedSpec
 
       awaitClusterUp(first, second, third)
 
-      within(30.seconds) {
+      within(15.seconds) {
         runOn(first) {
           cluster.leave(second)
         }
@@ -44,7 +44,9 @@ abstract class NodeLeavingAndExitingAndBeingRemovedSpec
 
         runOn(first, third) {
           enterBarrier("second-shutdown")
-          markNodeAsUnavailable(second)
+          // this test verifies that the removal is performed via the ExitingCompleted message,
+          // otherwise we would have `markNodeAsUnavailable(second)` to trigger the FailureDetectorPuppet
+
           // verify that the 'second' node is no longer part of the 'members'/'unreachable' set
           awaitAssert {
             clusterView.members.map(_.address) should not contain (address(second))

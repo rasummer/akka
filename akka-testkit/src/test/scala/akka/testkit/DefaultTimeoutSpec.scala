@@ -1,13 +1,13 @@
 /**
- * Copyright (C) 2013-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2013-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit
 
 import org.scalatest.{ WordSpec, BeforeAndAfterAll }
 import org.scalatest.Matchers
 import akka.actor.ActorSystem
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class DefaultTimeoutSpec
   extends WordSpec with Matchers with BeforeAndAfterAll with TestKitBase with DefaultTimeout {
 
@@ -17,7 +17,7 @@ class DefaultTimeoutSpec
 
   "A spec with DefaultTimeout" should {
     "use timeout from settings" in {
-      timeout should be(testKitSettings.DefaultTimeout)
+      timeout should ===(testKitSettings.DefaultTimeout)
     }
   }
 }

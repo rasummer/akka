@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote
 
 import akka.testkit._
@@ -11,7 +12,7 @@ import akka.ConfigurationException
 
 object RemoteDeployerSpec {
   val deployerConf = ConfigFactory.parseString("""
-      akka.actor.provider = "akka.remote.RemoteActorRefProvider"
+      akka.actor.provider = remote
       akka.actor.deployment {
         /service2 {
           router = round-robin-pool
@@ -29,7 +30,6 @@ object RemoteDeployerSpec {
 
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class RemoteDeployerSpec extends AkkaSpec(RemoteDeployerSpec.deployerConf) {
 
   "A RemoteDeployer" must {
@@ -38,7 +38,7 @@ class RemoteDeployerSpec extends AkkaSpec(RemoteDeployerSpec.deployerConf) {
       val service = "/service2"
       val deployment = system.asInstanceOf[ActorSystemImpl].provider.deployer.lookup(service.split("/").drop(1))
 
-      deployment should be(Some(
+      deployment should ===(Some(
         Deploy(
           service,
           deployment.get.config,
@@ -50,7 +50,7 @@ class RemoteDeployerSpec extends AkkaSpec(RemoteDeployerSpec.deployerConf) {
     "reject remote deployment when the source requires LocalScope" in {
       intercept[ConfigurationException] {
         system.actorOf(Props.empty.withDeploy(Deploy.local), "service2")
-      }.getMessage should be("configuration requested remote deployment for local-only Props at [akka://RemoteDeployerSpec/user/service2]")
+      }.getMessage should ===("configuration requested remote deployment for local-only Props at [akka://RemoteDeployerSpec/user/service2]")
     }
 
   }

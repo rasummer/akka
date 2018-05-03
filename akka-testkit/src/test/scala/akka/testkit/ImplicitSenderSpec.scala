@@ -1,13 +1,13 @@
 /**
- * Copyright (C) 2013-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2013-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.testkit
 
 import org.scalatest.{ WordSpec, BeforeAndAfterAll }
 import org.scalatest.Matchers
 import akka.actor.ActorSystem
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class ImplicitSenderSpec
   extends WordSpec with Matchers with BeforeAndAfterAll with TestKitBase with ImplicitSender {
 
@@ -17,7 +17,7 @@ class ImplicitSenderSpec
 
   "An ImplicitSender" should {
     "have testActor as its self" in {
-      self should be(testActor)
+      self should ===(testActor)
     }
   }
 }

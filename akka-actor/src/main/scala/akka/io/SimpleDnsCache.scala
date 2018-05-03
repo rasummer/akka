@@ -1,3 +1,7 @@
+/*
+ * Copyright (C) 2018 Lightbend Inc. <https://www.lightbend.com>
+ */
+
 package akka.io
 
 import java.util.concurrent.atomic.AtomicReference
@@ -15,7 +19,7 @@ class SimpleDnsCache extends Dns with PeriodicCacheCleanup {
 
   private val cache = new AtomicReference(new Cache(
     immutable.SortedSet()(ExpiryEntryOrdering),
-    immutable.Map(), clock))
+    immutable.Map(), clock _))
 
   private val nanoBase = System.nanoTime()
 
@@ -54,11 +58,12 @@ object SimpleDnsCache {
     }
 
     def put(answer: Resolved, ttlMillis: Long): Cache = {
-      val until = clock() + ttlMillis
+      val until0 = clock() + ttlMillis
+      val until = if (until0 < 0) Long.MaxValue else until0
 
       new Cache(
         queue + new ExpiryEntry(answer.name, until),
-        cache + (answer.name -> CacheEntry(answer, until)),
+        cache + (answer.name → CacheEntry(answer, until)),
         clock)
     }
 

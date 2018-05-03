@@ -1,12 +1,11 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import scala.collection.immutable
-import scala.concurrent.forkjoin.ThreadLocalRandom
-import akka.actor.ActorContext
-import akka.actor.Props
+import java.util.concurrent.ThreadLocalRandom
 import akka.dispatch.Dispatchers
 import com.typesafe.config.Config
 import akka.actor.SupervisorStrategy
@@ -59,16 +58,16 @@ final class RandomRoutingLogic extends RoutingLogic {
  */
 @SerialVersionUID(1L)
 final case class RandomPool(
-  override val nrOfInstances: Int, override val resizer: Option[Resizer] = None,
+  val nrOfInstances: Int, override val resizer: Option[Resizer] = None,
   override val supervisorStrategy: SupervisorStrategy = Pool.defaultSupervisorStrategy,
-  override val routerDispatcher: String = Dispatchers.DefaultDispatcherId,
-  override val usePoolDispatcher: Boolean = false)
+  override val routerDispatcher:   String             = Dispatchers.DefaultDispatcherId,
+  override val usePoolDispatcher:  Boolean            = false)
   extends Pool with PoolOverrideUnsetConfig[RandomPool] {
 
   def this(config: Config) =
     this(
       nrOfInstances = config.getInt("nr-of-instances"),
-      resizer = DefaultResizer.fromConfig(config),
+      resizer = Resizer.fromConfig(config),
       usePoolDispatcher = config.hasPath("pool-dispatcher"))
 
   /**
@@ -78,6 +77,8 @@ final case class RandomPool(
   def this(nr: Int) = this(nrOfInstances = nr)
 
   override def createRouter(system: ActorSystem): Router = new Router(RandomRoutingLogic())
+
+  override def nrOfInstances(sys: ActorSystem) = this.nrOfInstances
 
   /**
    * Setting the supervisor strategy to be used for the “head” Router actor.
@@ -96,7 +97,7 @@ final case class RandomPool(
   def withDispatcher(dispatcherId: String): RandomPool = copy(routerDispatcher = dispatcherId)
 
   /**
-   * Uses the resizer and/or the supervisor strategy of the given Routerconfig
+   * Uses the resizer and/or the supervisor strategy of the given RouterConfig
    * if this RouterConfig doesn't have one, i.e. the resizer defined in code is used if
    * resizer was not defined in config.
    */
@@ -119,8 +120,8 @@ final case class RandomPool(
  */
 @SerialVersionUID(1L)
 final case class RandomGroup(
-  override val paths: immutable.Iterable[String],
-  override val routerDispatcher: String = Dispatchers.DefaultDispatcherId)
+  val paths:                     immutable.Iterable[String],
+  override val routerDispatcher: String                     = Dispatchers.DefaultDispatcherId)
   extends Group {
 
   def this(config: Config) =
@@ -132,6 +133,8 @@ final case class RandomGroup(
    *   sent with [[akka.actor.ActorSelection]] to these paths
    */
   def this(routeePaths: java.lang.Iterable[String]) = this(paths = immutableSeq(routeePaths))
+
+  override def paths(system: ActorSystem): immutable.Iterable[String] = this.paths
 
   override def createRouter(system: ActorSystem): Router = new Router(RandomRoutingLogic())
 

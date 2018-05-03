@@ -1,12 +1,14 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.util;
 
 import org.junit.Test;
+import org.scalatest.junit.JUnitSuite;
 import scala.concurrent.duration.Duration;
 
-public class JavaDuration {
+public class JavaDuration extends JUnitSuite {
 
   @Test
   public void testCreation() {

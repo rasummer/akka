@@ -1,9 +1,8 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
-package akka
 
-import akka.actor._
+package akka
 
 /**
  * == Commonly Used Patterns With Akka ==
@@ -40,6 +39,6 @@ import akka.actor._
  * ask(actor, message);
  * }}}
  */
-package object pattern extends PipeToSupport with AskSupport with GracefulStopSupport with FutureTimeoutSupport {
+package object pattern extends PipeToSupport with AskSupport with GracefulStopSupport with FutureTimeoutSupport
+  with RetrySupport
 
-}

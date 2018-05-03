@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.remote
@@ -48,7 +48,7 @@ class DefaultFailureDetectorRegistry[A](detectorFactory: () ⇒ FailureDetector)
             case None ⇒
               val newDetector: FailureDetector = detectorFactory()
               newDetector.heartbeat()
-              resourceToFailureDetector.set(oldTable + (resource -> newDetector))
+              resourceToFailureDetector.set(oldTable + (resource → newDetector))
           }
         } finally failureDetectorCreationLock.unlock()
     }

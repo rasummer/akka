@@ -1,9 +1,8 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
-package akka.event
 
-import language.implicitConversions
+package akka.event
 
 import akka.actor.{ ActorRef, ActorSystem }
 import akka.event.Logging.simpleName
@@ -20,7 +19,9 @@ import scala.annotation.tailrec
  * The debug flag in the constructor toggles if operations on this EventStream should also be published
  * as Debug-Events
  */
-class EventStream(sys: ActorSystem, private val debug: Boolean = false) extends LoggingBus with SubchannelClassification {
+class EventStream(sys: ActorSystem, private val debug: Boolean) extends LoggingBus with SubchannelClassification {
+
+  def this(sys: ActorSystem) = this(sys, debug = false)
 
   type Event = AnyRef
   type Classifier = Class[_]
@@ -36,7 +37,8 @@ class EventStream(sys: ActorSystem, private val debug: Boolean = false) extends 
   protected def classify(event: AnyRef): Class[_] = event.getClass
 
   protected def publish(event: AnyRef, subscriber: ActorRef) = {
-    subscriber ! event
+    if (sys == null && subscriber.isTerminated) unsubscribe(subscriber)
+    else subscriber ! event
   }
 
   override def subscribe(subscriber: ActorRef, channel: Class[_]): Boolean = {
@@ -65,14 +67,18 @@ class EventStream(sys: ActorSystem, private val debug: Boolean = false) extends 
    * ''Must'' be called after actor system is "ready".
    * Starts system actor that takes care of unsubscribing subscribers that have terminated.
    */
-  def startUnsubscriber() = EventStreamUnsubscriber.start(sys, this)
+  def startUnsubscriber(): Unit =
+    // sys may be null for backwards compatibility reasons
+    if (sys ne null) EventStreamUnsubscriber.start(sys, this)
 
   /**
    * INTERNAL API
    */
   @tailrec
   final private[akka] def initUnsubscriber(unsubscriber: ActorRef): Boolean = {
-    initiallySubscribedOrUnsubscriber.get match {
+    // sys may be null for backwards compatibility reasons
+    if (sys eq null) false
+    else initiallySubscribedOrUnsubscriber.get match {
       case value @ Left(subscribers) ⇒
         if (initiallySubscribedOrUnsubscriber.compareAndSet(value, Right(unsubscriber))) {
           if (debug) publish(Logging.Debug(simpleName(this), this.getClass, "initialized unsubscriber to: " + unsubscriber + ", registering " + subscribers.size + " initial subscribers with it"))
@@ -95,7 +101,8 @@ class EventStream(sys: ActorSystem, private val debug: Boolean = false) extends 
    */
   @tailrec
   private def registerWithUnsubscriber(subscriber: ActorRef): Unit = {
-    initiallySubscribedOrUnsubscriber.get match {
+    // sys may be null for backwards compatibility reasons
+    if (sys ne null) initiallySubscribedOrUnsubscriber.get match {
       case value @ Left(subscribers) ⇒
         if (!initiallySubscribedOrUnsubscriber.compareAndSet(value, Left(subscribers + subscriber)))
           registerWithUnsubscriber(subscriber)
@@ -110,11 +117,12 @@ class EventStream(sys: ActorSystem, private val debug: Boolean = false) extends 
    *
    * The actual check if the subscriber still has subscriptions is performed by the `EventStreamUnsubscriber`,
    * because it's an expensive operation, and we don want to block client-code for that long, the Actor will eventually
-   * catch up and perform the apropriate operation.
+   * catch up and perform the appropriate operation.
    */
   @tailrec
   private def unregisterIfNoMoreSubscribedChannels(subscriber: ActorRef): Unit = {
-    initiallySubscribedOrUnsubscriber.get match {
+    // sys may be null for backwards compatibility reasons
+    if (sys ne null) initiallySubscribedOrUnsubscriber.get match {
       case value @ Left(subscribers) ⇒
         if (!initiallySubscribedOrUnsubscriber.compareAndSet(value, Left(subscribers - subscriber)))
           unregisterIfNoMoreSubscribedChannels(subscriber)

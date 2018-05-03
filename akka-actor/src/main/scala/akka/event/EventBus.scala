@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.event
@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentSkipListSet
 import java.util.Comparator
 import akka.util.{ Subclassification, SubclassifiedIndex }
 import scala.collection.immutable
-import java.util.concurrent.atomic.{ AtomicReference, AtomicInteger }
+import java.util.concurrent.atomic.{ AtomicReference }
 
 /**
  * Represents the base type for EventBuses
@@ -180,16 +180,18 @@ trait SubchannelClassification { this: EventBus ⇒
    * Expensive call! Avoid calling directly from event bus subscribe / unsubscribe.
    */
   private[akka] def hasSubscriptions(subscriber: Subscriber): Boolean =
+    // FIXME binary incompatible, but I think it is safe to filter out this problem,
+    //       since it is only called from new functionality in EventStreamUnsubscriber
     cache.values exists { _ contains subscriber }
 
   private def removeFromCache(changes: immutable.Seq[(Classifier, Set[Subscriber])]): Unit =
     cache = (cache /: changes) {
-      case (m, (c, cs)) ⇒ m.updated(c, m.getOrElse(c, Set.empty[Subscriber]) -- cs)
+      case (m, (c, cs)) ⇒ m.updated(c, m.getOrElse(c, Set.empty[Subscriber]) diff cs)
     }
 
   private def addToCache(changes: immutable.Seq[(Classifier, Set[Subscriber])]): Unit =
     cache = (cache /: changes) {
-      case (m, (c, cs)) ⇒ m.updated(c, m.getOrElse(c, Set.empty[Subscriber]) ++ cs)
+      case (m, (c, cs)) ⇒ m.updated(c, m.getOrElse(c, Set.empty[Subscriber]) union cs)
     }
 
 }
@@ -253,36 +255,36 @@ trait ScanningClassification { self: EventBus ⇒
 /**
  * Maps ActorRefs to ActorRefs to form an EventBus where ActorRefs can listen to other ActorRefs.
  *
- * All subscribers will be watched by an [[akka.event.ActorClassificationUnsubscriber]] and unsubscribed when they terminate.
+ * All subscribers will be watched by an `akka.event.ActorClassificationUnsubscriber` and unsubscribed when they terminate.
  * The unsubscriber actor will not be stopped automatically, and if you want to stop using the bus you should stop it yourself.
  */
-trait ActorClassification { this: ActorEventBus with ActorClassifier ⇒
+trait ManagedActorClassification { this: ActorEventBus with ActorClassifier ⇒
   import scala.annotation.tailrec
 
   protected def system: ActorSystem
 
-  private class ActorClassificationMappings(val seqNr: Int, val backing: Map[ActorRef, immutable.TreeSet[ActorRef]]) {
+  private class ManagedActorClassificationMappings(val seqNr: Int, val backing: Map[ActorRef, immutable.TreeSet[ActorRef]]) {
 
     def get(monitored: ActorRef): immutable.TreeSet[ActorRef] = backing.getOrElse(monitored, empty)
 
     def add(monitored: ActorRef, monitor: ActorRef) = {
       val watchers = backing.get(monitored).getOrElse(empty) + monitor
-      new ActorClassificationMappings(seqNr + 1, backing.updated(monitored, watchers))
+      new ManagedActorClassificationMappings(seqNr + 1, backing.updated(monitored, watchers))
     }
 
     def remove(monitored: ActorRef, monitor: ActorRef) = {
       val monitors = backing.get(monitored).getOrElse(empty) - monitor
-      new ActorClassificationMappings(seqNr + 1, backing.updated(monitored, monitors))
+      new ManagedActorClassificationMappings(seqNr + 1, backing.updated(monitored, monitors))
     }
 
     def remove(monitored: ActorRef) = {
       val v = backing - monitored
-      new ActorClassificationMappings(seqNr + 1, v)
+      new ManagedActorClassificationMappings(seqNr + 1, v)
     }
   }
 
-  private val mappings = new AtomicReference[ActorClassificationMappings](
-    new ActorClassificationMappings(0, Map.empty[ActorRef, immutable.TreeSet[ActorRef]]))
+  private val mappings = new AtomicReference[ManagedActorClassificationMappings](
+    new ManagedActorClassificationMappings(0, Map.empty[ActorRef, immutable.TreeSet[ActorRef]]))
 
   private val empty = immutable.TreeSet.empty[ActorRef]
 
@@ -409,3 +411,4 @@ trait ActorClassification { this: ActorEventBus with ActorClassifier ⇒
     true
   }
 }
+

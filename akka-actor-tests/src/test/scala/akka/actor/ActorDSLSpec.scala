@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
@@ -12,6 +12,7 @@ import akka.event.Logging.Warning
 import scala.concurrent.{ Await, Future }
 import scala.concurrent.duration._
 import java.util.concurrent.TimeoutException
+import akka.testkit.TimingTest
 
 class ActorDSLDummy {
   //#import
@@ -36,7 +37,7 @@ class ActorDSLSpec extends AkkaSpec {
       //#inbox
       implicit val i = inbox()
       echo ! "hello"
-      i.receive() should be("hello")
+      i.receive() should ===("hello")
       //#inbox
     }
 
@@ -50,7 +51,7 @@ class ActorDSLSpec extends AkkaSpec {
       i watch target
       //#watch
       target ! PoisonPill
-      i receive 1.second should be(Terminated(target)(true, false))
+      i receive 1.second should ===(Terminated(target)(true, false))
     }
 
     "support queueing multiple queries" in {
@@ -61,11 +62,11 @@ class ActorDSLSpec extends AkkaSpec {
         Future { Thread.sleep(100); i.select() { case "world" ⇒ 1 } } recover { case x ⇒ x },
         Future { Thread.sleep(200); i.select() { case "hello" ⇒ 2 } } recover { case x ⇒ x }))
       Thread.sleep(1000)
-      res.isCompleted should be(false)
+      res.isCompleted should ===(false)
       i.receiver ! 42
       i.receiver ! "hello"
       i.receiver ! "world"
-      Await.result(res, 5 second) should be(Seq(42, 1, 2))
+      Await.result(res, 5 second) should ===(Seq(42, 1, 2))
     }
 
     "support selective receives" in {
@@ -75,11 +76,11 @@ class ActorDSLSpec extends AkkaSpec {
       val result = i.select() {
         case "world" ⇒ true
       }
-      result should be(true)
-      i.receive() should be("hello")
+      result should ===(true)
+      i.receive() should ===("hello")
     }
 
-    "have a maximum queue size" in {
+    "have a maximum queue size" taggedAs TimingTest in {
       val i = inbox()
       system.eventStream.subscribe(testActor, classOf[Warning])
       try {
@@ -92,7 +93,7 @@ class ActorDSLSpec extends AkkaSpec {
         i.receiver ! 42
         expectNoMsg(1 second)
         val gotit = for (_ ← 1 to 1000) yield i.receive()
-        gotit should be((1 to 1000) map (_ ⇒ 0))
+        gotit should ===((1 to 1000) map (_ ⇒ 0))
         intercept[TimeoutException] {
           i.receive(1 second)
         }
@@ -101,7 +102,7 @@ class ActorDSLSpec extends AkkaSpec {
       }
     }
 
-    "have a default and custom timeouts" in {
+    "have a default and custom timeouts" taggedAs TimingTest in {
       val i = inbox()
       within(5 seconds, 6 seconds) {
         intercept[TimeoutException](i.receive())
@@ -126,7 +127,7 @@ class ActorDSLSpec extends AkkaSpec {
 
       implicit val i = inbox()
       a ! "hello"
-      i.receive() should be("hi")
+      i.receive() should ===("hi")
     }
 
     "support becomeStacked" in {
@@ -231,7 +232,7 @@ class ActorDSLSpec extends AkkaSpec {
       })
       //#nested-actor
       expectMsg("hello from akka://ActorDSLSpec/user/fred/barney")
-      lastSender should be(a)
+      lastSender should ===(a)
     }
 
     "support Stash" in {

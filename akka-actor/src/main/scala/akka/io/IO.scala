@@ -1,13 +1,10 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.io
 
-import scala.util.control.NonFatal
 import akka.actor._
-import akka.io.SelectionHandler.WorkerForCommand
-import akka.event.Logging
 
 /**
  * Entry point to Akka’s IO layer.

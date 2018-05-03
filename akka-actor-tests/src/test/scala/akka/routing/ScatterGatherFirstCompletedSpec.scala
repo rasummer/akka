@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.routing
 
 import java.util.concurrent.atomic.AtomicInteger
@@ -10,6 +11,9 @@ import akka.actor.{ Props, Actor }
 import akka.pattern.ask
 import akka.testkit.{ TestLatch, ImplicitSender, DefaultTimeout, AkkaSpec }
 import akka.actor.ActorSystem
+import akka.actor.Status
+import java.util.concurrent.TimeoutException
+import akka.testkit.TestProbe
 
 object ScatterGatherFirstCompletedSpec {
   class TestActor extends Actor {
@@ -36,7 +40,6 @@ object ScatterGatherFirstCompletedSpec {
     }), "Actor:" + id)
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class ScatterGatherFirstCompletedSpec extends AkkaSpec with DefaultTimeout with ImplicitSender {
   import ScatterGatherFirstCompletedSpec._
 
@@ -68,8 +71,8 @@ class ScatterGatherFirstCompletedSpec extends AkkaSpec with DefaultTimeout with 
 
       Await.ready(doneLatch, TestLatch.DefaultTimeout)
 
-      counter1.get should be(1)
-      counter2.get should be(1)
+      counter1.get should ===(1)
+      counter2.get should ===(1)
     }
 
     "return response, even if one of the actors has stopped" in {
@@ -81,7 +84,18 @@ class ScatterGatherFirstCompletedSpec extends AkkaSpec with DefaultTimeout with 
 
       routedActor ! Broadcast(Stop(Some(1)))
       Await.ready(shutdownLatch, TestLatch.DefaultTimeout)
-      Await.result(routedActor ? Broadcast(0), timeout.duration) should be(14)
+      Await.result(routedActor ? Broadcast(0), timeout.duration) should ===(14)
+    }
+
+  }
+
+  "Scatter-gather pool" must {
+
+    "without routees should reply immediately" in {
+      val probe = TestProbe()
+      val router = system.actorOf(ScatterGatherFirstCompletedPool(nrOfInstances = 0, within = 5.seconds).props(Props.empty))
+      router.tell("hello", probe.ref)
+      probe.expectMsgType[Status.Failure](2.seconds).cause.getClass should be(classOf[TimeoutException])
     }
 
   }

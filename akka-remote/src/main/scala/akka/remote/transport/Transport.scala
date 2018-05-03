@@ -1,14 +1,18 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.remote.transport
 
-import scala.concurrent.{ Promise, Future }
-import akka.actor.{ NoSerializationVerificationNeeded, ActorRef, Address }
+import scala.concurrent.{ Future, Promise }
+import akka.actor.{ ActorRef, Address, NoSerializationVerificationNeeded }
 import akka.util.ByteString
 import akka.remote.transport.AssociationHandle.HandleEventListener
 import akka.AkkaException
+
 import scala.util.control.NoStackTrace
+import akka.actor.DeadLetterSuppression
+import akka.event.LoggingAdapter
 
 object Transport {
 
@@ -23,7 +27,7 @@ object Transport {
 
   /**
    * Message sent to a [[akka.remote.transport.Transport.AssociationEventListener]] registered to a transport
-   * (via the Promise returned by [[akka.remote.transport.Transport.listen]]) when an inbound association request arrives.
+   * (via the Promise returned by [[akka.remote.transport.Transport#listen]]) when an inbound association request arrives.
    *
    * @param association
    *   The handle for the inbound association.
@@ -103,6 +107,9 @@ trait Transport {
    */
   def listen: Future[(Address, Promise[AssociationEventListener])]
 
+  // Need to do like this for binary compatibility reasons
+  // def boundAddress: Address
+
   /**
    * Asynchronously opens a logical duplex link between two Transport Entities over a network. It could be backed by a
    * real transport-layer connection (TCP), more lightweight connections provided over datagram protocols (UDP with
@@ -149,7 +156,7 @@ object AssociationHandle {
 
   /**
    * Message sent to the listener registered to an association (via the Promise returned by
-   * [[akka.remote.transport.AssociationHandle.readHandlerPromise]]) when an inbound payload arrives.
+   * [[akka.remote.transport.AssociationHandle#readHandlerPromise]]) when an inbound payload arrives.
    *
    * @param payload
    *   The raw bytes that were sent by the remote endpoint.
@@ -164,7 +171,7 @@ object AssociationHandle {
    * @param info
    *   information about the reason of disassociation
    */
-  final case class Disassociated(info: DisassociateInfo) extends HandleEvent
+  final case class Disassociated(info: DisassociateInfo) extends HandleEvent with DeadLetterSuppression
 
   /**
    * Supertype of possible disassociation reasons
@@ -257,7 +264,22 @@ trait AssociationHandle {
    * could be called arbitrarily many times.
    *
    */
+  @deprecated(message = "Use method that states reasons to make sure disassociation reasons are logged.", since = "2.5.3")
   def disassociate(): Unit
 
+  /**
+   * Closes the underlying transport link, if needed. Some transports might not need an explicit teardown (UDP) and
+   * some transports may not support it (hardware connections). Remote endpoint of the channel or connection MAY
+   * be notified, but this is not guaranteed. The Transport that provides the handle MUST guarantee that disassociate()
+   * could be called arbitrarily many times.
+   */
+  def disassociate(reason: String, log: LoggingAdapter): Unit = {
+    if (log.isDebugEnabled)
+      log.debug(
+        "Association between local [{}] and remote [{}] was disassociated because {}",
+        localAddress, remoteAddress, reason)
+
+    disassociate()
+  }
 }
 

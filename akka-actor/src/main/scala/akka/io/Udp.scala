@@ -1,10 +1,11 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.io
 
+import java.net.DatagramSocket
 import java.net.InetSocketAddress
-import java.nio.channels.DatagramChannel
 import com.typesafe.config.Config
 import scala.collection.immutable
 import akka.io.Inet.{ SoJavaFactories, SocketOption }
@@ -92,9 +93,10 @@ object Udp extends ExtensionId[UdpExt] with ExtensionIdProvider {
    * The listener actor for the newly bound port will reply with a [[Bound]]
    * message, or the manager will reply with a [[CommandFailed]] message.
    */
-  final case class Bind(handler: ActorRef,
-                        localAddress: InetSocketAddress,
-                        options: immutable.Traversable[SocketOption] = Nil) extends Command
+  final case class Bind(
+    handler:      ActorRef,
+    localAddress: InetSocketAddress,
+    options:      immutable.Traversable[SocketOption] = Nil) extends Command
 
   /**
    * Send this message to the listener actor that previously sent a [[Bound]]
@@ -120,13 +122,13 @@ object Udp extends ExtensionId[UdpExt] with ExtensionIdProvider {
    * Send this message to a listener actor (which sent a [[Bound]] message) to
    * have it stop reading datagrams from the network. If the O/S kernel’s receive
    * buffer runs full then subsequent datagrams will be silently discarded.
-   * Re-enable reading from the socket using the [[ResumeReading]] command.
+   * Re-enable reading from the socket using the `ResumeReading` command.
    */
   case object SuspendReading extends Command
 
   /**
    * This message must be sent to the listener actor to re-enable reading from
-   * the socket after a [[SuspendReading]] command.
+   * the socket after a `SuspendReading` command.
    */
   case object ResumeReading extends Command
 
@@ -161,7 +163,7 @@ object Udp extends ExtensionId[UdpExt] with ExtensionIdProvider {
   case object SimpleSenderReady extends SimpleSenderReady
 
   /**
-   * This message is sent by the listener actor in response to an [[Unbind]] command
+   * This message is sent by the listener actor in response to an `Unbind` command
    * after the socket has been closed.
    */
   sealed trait Unbound
@@ -180,7 +182,7 @@ object Udp extends ExtensionId[UdpExt] with ExtensionIdProvider {
      * For more information see [[java.net.DatagramSocket#setBroadcast]]
      */
     final case class Broadcast(on: Boolean) extends SocketOption {
-      override def beforeBind(c: DatagramChannel): Unit = c.socket.setBroadcast(on)
+      override def beforeDatagramBind(s: DatagramSocket): Unit = s.setBroadcast(on)
     }
 
   }
@@ -235,7 +237,6 @@ object UdpMessage {
   import Udp._
   import java.lang.{ Iterable ⇒ JIterable }
   import scala.collection.JavaConverters._
-  import language.implicitConversions
 
   /**
    * Each [[Udp.Send]] can optionally request a positive acknowledgment to be sent
@@ -312,13 +313,13 @@ object UdpMessage {
    * Send this message to a listener actor (which sent a [[Udp.Bound]] message) to
    * have it stop reading datagrams from the network. If the O/S kernel’s receive
    * buffer runs full then subsequent datagrams will be silently discarded.
-   * Re-enable reading from the socket using the [[Udp.ResumeReading]] command.
+   * Re-enable reading from the socket using the `Udp.ResumeReading` command.
    */
   def suspendReading: Command = SuspendReading
 
   /**
    * This message must be sent to the listener actor to re-enable reading from
-   * the socket after a [[Udp.SuspendReading]] command.
+   * the socket after a `Udp.SuspendReading` command.
    */
   def resumeReading: Command = ResumeReading
 }

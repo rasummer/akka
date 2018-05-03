@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import language.postfixOps
@@ -19,7 +20,10 @@ final case class ConvergenceMultiNodeConfig(failureDetectorPuppet: Boolean) exte
   val fourth = role("fourth")
 
   commonConfig(debugConfig(on = false).
-    withFallback(ConfigFactory.parseString("akka.cluster.failure-detector.threshold = 4")).
+    withFallback(ConfigFactory.parseString("""
+      akka.cluster.failure-detector.threshold = 4
+      akka.cluster.allow-weakly-up-members = off
+      """)).
     withFallback(MultiNodeClusterSpec.clusterConfig(failureDetectorPuppet)))
 }
 
@@ -69,12 +73,12 @@ abstract class ConvergenceSpec(multiNodeConfig: ConvergenceMultiNodeConfig)
 
         within(28 seconds) {
           // third becomes unreachable
-          awaitAssert(clusterView.unreachableMembers.size should be(1))
+          awaitAssert(clusterView.unreachableMembers.size should ===(1))
           awaitSeenSameState(first, second)
           // still one unreachable
-          clusterView.unreachableMembers.size should be(1)
-          clusterView.unreachableMembers.head.address should be(thirdAddress)
-          clusterView.members.size should be(3)
+          clusterView.unreachableMembers.size should ===(1)
+          clusterView.unreachableMembers.head.address should ===(thirdAddress)
+          clusterView.members.size should ===(3)
 
         }
       }
@@ -95,11 +99,11 @@ abstract class ConvergenceSpec(multiNodeConfig: ConvergenceMultiNodeConfig)
 
       runOn(first, second, fourth) {
         for (n ← 1 to 5) {
-          awaitAssert(clusterView.members.size should be(3))
+          awaitAssert(clusterView.members.size should ===(4))
           awaitSeenSameState(first, second, fourth)
-          memberStatus(first) should be(Some(MemberStatus.Up))
-          memberStatus(second) should be(Some(MemberStatus.Up))
-          memberStatus(fourth) should be(None)
+          memberStatus(first) should ===(Some(MemberStatus.Up))
+          memberStatus(second) should ===(Some(MemberStatus.Up))
+          memberStatus(fourth) should ===(Some(MemberStatus.Joining))
           // wait and then check again
           Thread.sleep(1.second.dilated.toMillis)
         }

@@ -1,29 +1,42 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.event
 
 import akka.testkit._
+
+import scala.util.control.NoStackTrace
 import scala.concurrent.duration._
 import com.typesafe.config.{ Config, ConfigFactory }
 import akka.actor._
-import java.util.{ Date, GregorianCalendar, TimeZone, Calendar }
+import java.nio.charset.StandardCharsets
+import java.util.{ Calendar, Date, GregorianCalendar, TimeZone }
+
 import org.scalatest.WordSpec
 import org.scalatest.Matchers
 import akka.serialization.SerializationExtension
 import akka.event.Logging._
 import akka.util.Helpers
 import akka.event.Logging.InitializeLogger
-import scala.Some
 import akka.event.Logging.Warning
+import java.text.SimpleDateFormat
 
 object LoggerSpec {
 
   val defaultConfig = ConfigFactory.parseString("""
       akka {
         stdout-loglevel = "WARNING"
-        loglevel = "DEBUG"
+        loglevel = "DEBUG" # test verifies debug
         loggers = ["akka.event.LoggerSpec$TestLogger1"]
+      }
+    """).withFallback(AkkaSpec.testConf)
+
+  val slowConfig = ConfigFactory.parseString("""
+      akka {
+        stdout-loglevel = "ERROR"
+        loglevel = "ERROR"
+        loggers = ["akka.event.LoggerSpec$SlowLogger"]
       }
     """).withFallback(AkkaSpec.testConf)
 
@@ -43,15 +56,15 @@ object LoggerSpec {
       }
     """).withFallback(AkkaSpec.testConf)
 
-  val ticket3165Config = ConfigFactory.parseString("""
+  val ticket3165Config = ConfigFactory.parseString(s"""
       akka {
         stdout-loglevel = "WARNING"
-        loglevel = "DEBUG"
-        loggers = ["akka.event.LoggerSpec$TestLogger1"]
+        loglevel = "DEBUG" # test verifies debug
+        loggers = ["akka.event.LoggerSpec$$TestLogger1"]
         actor {
           serialize-messages = on
           serialization-bindings {
-            "akka.event.Logging$LogEvent" = bytes
+            "akka.event.Logging$$LogEvent" = bytes
             "java.io.Serializable" = java
           }
         }
@@ -91,15 +104,29 @@ object LoggerSpec {
     }
   }
 
+  class SlowLogger extends Logging.DefaultLogger {
+    override def aroundReceive(r: Receive, msg: Any): Unit = {
+      msg match {
+        case event: LogEvent ⇒
+          if (event.message.toString.startsWith("msg1"))
+            Thread.sleep(500) // slow
+          super.aroundReceive(r, msg)
+        case _ ⇒ super.aroundReceive(r, msg)
+      }
+
+    }
+  }
+
   class ActorWithMDC extends Actor with DiagnosticActorLogging {
     var reqId = 0
 
     override def mdc(currentMessage: Any): MDC = {
       reqId += 1
-      val always = Map("requestId" -> reqId)
+      val always = Map("requestId" → reqId)
+      val cmim = "Current Message in MDC"
       val perMessage = currentMessage match {
-        case cm @ "Current Message in MDC" ⇒ Map("currentMsg" -> cm, "currentMsgLength" -> cm.length)
-        case _                             ⇒ Map()
+        case `cmim` ⇒ Map[String, Any]("currentMsg" → cmim, "currentMsgLength" → cmim.length)
+        case _      ⇒ Map()
       }
       always ++ perMessage
     }
@@ -111,7 +138,6 @@ object LoggerSpec {
 
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class LoggerSpec extends WordSpec with Matchers {
 
   import LoggerSpec._
@@ -147,13 +173,32 @@ class LoggerSpec extends WordSpec with Matchers {
       val out = createSystemAndLogToBuffer("defaultLogger", defaultConfig, true)
       out.size should be > (0)
     }
+
+    "drain logger queue on system.terminate" in {
+      val out = new java.io.ByteArrayOutputStream()
+      Console.withOut(out) {
+        val sys = ActorSystem("defaultLogger", slowConfig)
+        sys.log.error("msg1")
+        sys.log.error("msg2")
+        sys.log.error("msg3")
+        TestKit.shutdownActorSystem(sys, verifySystemShutdown = true)
+        out.flush()
+        out.close()
+      }
+
+      val logMessages = new String(out.toByteArray).split("\n")
+      logMessages.head should include("msg1")
+      logMessages.last should include("msg3")
+      logMessages.size should ===(3)
+    }
+
   }
 
   "An actor system configured with the logging turned off" must {
 
     "not log messages to standard output" in {
       val out = createSystemAndLogToBuffer("noLogging", noLoggingConfig, false)
-      out.size should be(0)
+      out.size should ===(0)
     }
   }
 
@@ -230,8 +275,36 @@ class LoggerSpec extends WordSpec with Matchers {
       val minutes = c.get(Calendar.MINUTE)
       val seconds = c.get(Calendar.SECOND)
       val ms = c.get(Calendar.MILLISECOND)
-      Helpers.currentTimeMillisToUTCString(timestamp) should be(f"$hours%02d:$minutes%02d:$seconds%02d.$ms%03dUTC")
+      Helpers.currentTimeMillisToUTCString(timestamp) should ===(f"$hours%02d:$minutes%02d:$seconds%02d.$ms%03dUTC")
     }
+  }
+
+  "StdOutLogger" must {
+    "format timestamp to with system default TimeZone" in {
+      val log = new StdOutLogger {}
+      val event = Info("test", classOf[String], "test")
+      // this was the format in Akka 2.4 and earlier
+      val dateFormat = new SimpleDateFormat("MM/dd/yyyy HH:mm:ss.SSS")
+      val expected = dateFormat.format(new Date(event.timestamp))
+      log.timestamp(event) should ===(expected)
+    }
+
+    "include the cause message in the log message even exceptions with no stack trace" in {
+      class MyCause(msg: String) extends RuntimeException(msg) with NoStackTrace
+
+      val log = new StdOutLogger {}
+      val out = new java.io.ByteArrayOutputStream()
+
+      val causeMessage = "Some details about the exact cause"
+
+      Console.withOut(out) {
+        log.error(Error(new MyCause(causeMessage), "source", classOf[LoggerSpec], "message", Map.empty[String, Any]))
+      }
+      out.flush()
+      out.close()
+      new String(out.toByteArray, StandardCharsets.UTF_8) should include(causeMessage)
+    }
+
   }
 
   "Ticket 3165 - serialize-messages and dual-entry serialization of LogEvent" must {

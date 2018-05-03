@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.io
@@ -12,7 +12,7 @@ import akka.actor._
 import akka.testkit.{ TestProbe, TestActorRef, AkkaSpec, EventFilter }
 import akka.io.TcpListener.{ RegisterIncoming, FailedRegisterIncoming }
 import akka.io.SelectionHandler._
-import akka.TestUtils
+import akka.testkit.SocketUtil
 import Tcp._
 
 class TcpListenerSpec extends AkkaSpec("""
@@ -28,6 +28,7 @@ class TcpListenerSpec extends AkkaSpec("""
       listener ! new ChannelRegistration {
         def disableInterest(op: Int) = ()
         def enableInterest(op: Int) = ()
+        def cancel() = ()
       }
       bindCommander.expectMsgType[Bound]
     }
@@ -135,7 +136,7 @@ class TcpListenerSpec extends AkkaSpec("""
     val bindCommander = TestProbe()
     val parent = TestProbe()
     val selectorRouter = TestProbe()
-    val endpoint = TestUtils.temporaryServerAddress()
+    val endpoint = SocketUtil.temporaryServerAddress()
 
     var registerCallReceiver = TestProbe()
     var interestCallReceiver = TestProbe()
@@ -148,6 +149,7 @@ class TcpListenerSpec extends AkkaSpec("""
       listener ! new ChannelRegistration {
         def enableInterest(op: Int): Unit = interestCallReceiver.ref ! op
         def disableInterest(op: Int): Unit = interestCallReceiver.ref ! -op
+        def cancel(): Unit = ()
       }
       bindCommander.expectMsgType[Bound]
     }
@@ -159,8 +161,8 @@ class TcpListenerSpec extends AkkaSpec("""
     def expectWorkerForCommand: SocketChannel =
       selectorRouter.expectMsgPF() {
         case WorkerForCommand(RegisterIncoming(chan), commander, _) ⇒
-          chan.isOpen should be(true)
-          commander should be(listener)
+          chan.isOpen should ===(true)
+          commander should ===(listener)
           chan
       }
 

@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.actor
 
 import scala.concurrent.duration._
@@ -10,7 +11,6 @@ import scala.concurrent.Await
 import akka.util.Timeout
 import akka.pattern.{ ask, AskTimeoutException }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class ActorTimeoutSpec extends AkkaSpec {
 
   val testTimeout = 200.millis.dilated

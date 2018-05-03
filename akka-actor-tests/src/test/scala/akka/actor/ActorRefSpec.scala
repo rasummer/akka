@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.actor
@@ -14,7 +14,6 @@ import java.lang.IllegalStateException
 import scala.concurrent.Promise
 import akka.pattern.ask
 import akka.serialization.JavaSerializer
-import akka.TestUtils.verifyActorTermination
 
 object ActorRefSpec {
 
@@ -110,7 +109,6 @@ object ActorRefSpec {
   }
 }
 
-@org.junit.runner.RunWith(classOf[org.scalatest.junit.JUnitRunner])
 class ActorRefSpec extends AkkaSpec with DefaultTimeout {
   import akka.actor.ActorRefSpec._
 
@@ -139,7 +137,7 @@ class ActorRefSpec extends AkkaSpec with DefaultTimeout {
         new Actor { def receive = { case _ ⇒ } }
       }
 
-      def contextStackMustBeEmpty(): Unit = ActorCell.contextStack.get.headOption should be(None)
+      def contextStackMustBeEmpty(): Unit = ActorCell.contextStack.get.headOption should ===(None)
 
       EventFilter[ActorInitializationException](occurrences = 1) intercept {
         intercept[akka.actor.ActorInitializationException] {
@@ -249,9 +247,20 @@ class ActorRefSpec extends AkkaSpec with DefaultTimeout {
         (intercept[java.lang.IllegalStateException] {
           wrap(result ⇒
             actorOf(Props(new OuterActor(actorOf(Props(promiseIntercept({ throw new IllegalStateException("Ur state be b0rked"); new InnerActor })(result)))))))
-        }).getMessage should be("Ur state be b0rked")
+        }).getMessage should ===("Ur state be b0rked")
 
         contextStackMustBeEmpty()
+      }
+    }
+
+    "insert its path in a ActorInitializationException" in {
+      EventFilter[ActorInitializationException](occurrences = 1, pattern = "/user/failingActor:") intercept {
+        intercept[java.lang.IllegalStateException] {
+          wrap(result ⇒
+            system.actorOf(Props(promiseIntercept({
+              throw new IllegalStateException
+            })(result)), "failingActor"))
+        }
       }
     }
 
@@ -275,15 +284,15 @@ class ActorRefSpec extends AkkaSpec with DefaultTimeout {
         val in = new ObjectInputStream(new ByteArrayInputStream(bytes))
         val readA = in.readObject
 
-        a.isInstanceOf[ActorRefWithCell] should be(true)
-        readA.isInstanceOf[ActorRefWithCell] should be(true)
-        (readA eq a) should be(true)
+        a.isInstanceOf[ActorRefWithCell] should ===(true)
+        readA.isInstanceOf[ActorRefWithCell] should ===(true)
+        (readA eq a) should ===(true)
       }
 
       val ser = new JavaSerializer(esys)
       val readA = ser.fromBinary(bytes, None)
-      readA.isInstanceOf[ActorRefWithCell] should be(true)
-      (readA eq a) should be(true)
+      readA.isInstanceOf[ActorRefWithCell] should ===(true)
+      (readA eq a) should ===(true)
     }
 
     "throw an exception on deserialize if no system in scope" in {
@@ -303,7 +312,7 @@ class ActorRefSpec extends AkkaSpec with DefaultTimeout {
 
       (intercept[java.lang.IllegalStateException] {
         in.readObject
-      }).getMessage should be("Trying to deserialize a serialized ActorRef without an ActorSystem in scope." +
+      }).getMessage should ===("Trying to deserialize a serialized ActorRef without an ActorSystem in scope." +
         " Use 'akka.serialization.Serialization.currentSystem.withValue(system) { ... }'")
     }
 
@@ -324,11 +333,12 @@ class ActorRefSpec extends AkkaSpec with DefaultTimeout {
 
       ref ! PoisonPill
 
-      verifyActorTermination(ref)
+      watch(ref)
+      expectTerminated(ref)
 
       JavaSerializer.currentSystem.withValue(sysImpl) {
         val in = new ObjectInputStream(new ByteArrayInputStream(baos.toByteArray))
-        in.readObject should be(new EmptyLocalActorRef(sysImpl.provider, ref.path, system.eventStream))
+        in.readObject should ===(new EmptyLocalActorRef(sysImpl.provider, ref.path, system.eventStream))
       }
     }
 
@@ -341,18 +351,18 @@ class ActorRefSpec extends AkkaSpec with DefaultTimeout {
       val nested = Await.result((a ? "any").mapTo[ActorRef], timeout.duration)
       a should not be null
       nested should not be null
-      (a ne nested) should be(true)
+      (a ne nested) should ===(true)
     }
 
     "support advanced nested actorOfs" in {
       val a = system.actorOf(Props(new OuterActor(system.actorOf(Props(new InnerActor)))))
       val inner = Await.result(a ? "innerself", timeout.duration)
 
-      Await.result(a ? a, timeout.duration) should be(a)
-      Await.result(a ? "self", timeout.duration) should be(a)
+      Await.result(a ? a, timeout.duration) should ===(a)
+      Await.result(a ? "self", timeout.duration) should ===(a)
       inner should not be a
 
-      Await.result(a ? "msg", timeout.duration) should be("msg")
+      Await.result(a ? "msg", timeout.duration) should ===("msg")
     }
 
     "support reply via sender" in {
@@ -400,10 +410,11 @@ class ActorRefSpec extends AkkaSpec with DefaultTimeout {
       val fnull = (ref.ask(0)(timeout)).mapTo[String]
       ref ! PoisonPill
 
-      Await.result(ffive, timeout.duration) should be("five")
-      Await.result(fnull, timeout.duration) should be("null")
+      Await.result(ffive, timeout.duration) should ===("five")
+      Await.result(fnull, timeout.duration) should ===("null")
 
-      verifyActorTermination(ref)
+      watch(ref)
+      expectTerminated(ref)
     }
 
     "restart when Kill:ed" in {

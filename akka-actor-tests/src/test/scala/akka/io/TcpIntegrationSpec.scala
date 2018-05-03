@@ -1,20 +1,29 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.io
 
+import akka.actor.{ ActorRef, PoisonPill }
+import akka.io.Tcp._
 import akka.testkit.{ TestProbe, AkkaSpec }
 import akka.util.ByteString
-import akka.TestUtils._
-import concurrent.duration._
-import Tcp._
-import java.net.InetSocketAddress
+import java.io.IOException
+import java.net.{ ServerSocket, InetSocketAddress }
+import org.scalatest.concurrent.Timeouts
+import scala.concurrent.duration._
+
+import scala.language.postfixOps
 
 class TcpIntegrationSpec extends AkkaSpec("""
     akka.loglevel = INFO
     akka.actor.serialize-creators = on
-    """) with TcpIntegrationSpecSupport {
+    """) with TcpIntegrationSpecSupport with Timeouts {
+
+  def verifyActorTermination(actor: ActorRef): Unit = {
+    watch(actor)
+    expectTerminated(actor)
+  }
 
   "The TCP transport implementation" should {
 
@@ -29,13 +38,84 @@ class TcpIntegrationSpec extends AkkaSpec("""
       verifyActorTermination(serverConnection)
     }
 
-    "properly handle connection abort from one side" in new TestSetup {
+    "properly handle connection abort from client side" in new TestSetup {
       val (clientHandler, clientConnection, serverHandler, serverConnection) = establishNewClientConnection()
       clientHandler.send(clientConnection, Abort)
       clientHandler.expectMsg(Aborted)
       serverHandler.expectMsgType[ErrorClosed]
       verifyActorTermination(clientConnection)
       verifyActorTermination(serverConnection)
+    }
+
+    "properly handle connection abort from client side after chit-chat" in new TestSetup {
+      val (clientHandler, clientConnection, serverHandler, serverConnection) = establishNewClientConnection()
+      chitchat(clientHandler, clientConnection, serverHandler, serverConnection)
+
+      clientHandler.send(clientConnection, Abort)
+      clientHandler.expectMsg(Aborted)
+      serverHandler.expectMsgType[ErrorClosed]
+      verifyActorTermination(clientConnection)
+      verifyActorTermination(serverConnection)
+    }
+
+    "properly handle connection abort from server side" in new TestSetup {
+      val (clientHandler, clientConnection, serverHandler, serverConnection) = establishNewClientConnection()
+      serverHandler.send(serverConnection, Abort)
+      serverHandler.expectMsg(Aborted)
+      clientHandler.expectMsgType[ErrorClosed]
+      verifyActorTermination(clientConnection)
+      verifyActorTermination(serverConnection)
+    }
+
+    "properly handle connection abort from server side after chit-chat" in new TestSetup {
+      val (clientHandler, clientConnection, serverHandler, serverConnection) = establishNewClientConnection()
+      chitchat(clientHandler, clientConnection, serverHandler, serverConnection)
+
+      serverHandler.send(serverConnection, Abort)
+      serverHandler.expectMsg(Aborted)
+      clientHandler.expectMsgType[ErrorClosed]
+      verifyActorTermination(clientConnection)
+      verifyActorTermination(serverConnection)
+    }
+
+    "properly handle connection abort via PoisonPill from client side" in new TestSetup {
+      val (clientHandler, clientConnection, serverHandler, serverConnection) = establishNewClientConnection()
+      clientHandler.send(clientConnection, PoisonPill)
+      verifyActorTermination(clientConnection)
+
+      serverHandler.expectMsgType[ErrorClosed]
+      verifyActorTermination(serverConnection)
+    }
+
+    "properly handle connection abort via PoisonPill from client side after chit-chat" in new TestSetup {
+      val (clientHandler, clientConnection, serverHandler, serverConnection) = establishNewClientConnection()
+      chitchat(clientHandler, clientConnection, serverHandler, serverConnection)
+
+      clientHandler.send(clientConnection, PoisonPill)
+      verifyActorTermination(clientConnection)
+
+      serverHandler.expectMsgType[ErrorClosed]
+      verifyActorTermination(serverConnection)
+    }
+
+    "properly handle connection abort via PoisonPill from server side" in new TestSetup {
+      val (clientHandler, clientConnection, serverHandler, serverConnection) = establishNewClientConnection()
+      serverHandler.send(serverConnection, PoisonPill)
+      verifyActorTermination(serverConnection)
+
+      clientHandler.expectMsgType[ErrorClosed]
+      verifyActorTermination(clientConnection)
+    }
+
+    "properly handle connection abort via PoisonPill from server side after chit-chat" in new TestSetup {
+      val (clientHandler, clientConnection, serverHandler, serverConnection) = establishNewClientConnection()
+      chitchat(clientHandler, clientConnection, serverHandler, serverConnection)
+
+      serverHandler.send(serverConnection, PoisonPill)
+      verifyActorTermination(serverConnection)
+
+      clientHandler.expectMsgType[ErrorClosed]
+      verifyActorTermination(clientConnection)
     }
 
     "properly complete one client/server request/response cycle" in new TestSetup {
@@ -46,11 +126,11 @@ class TcpIntegrationSpec extends AkkaSpec("""
 
       clientHandler.send(clientConnection, Write(ByteString("Captain on the bridge!"), Aye))
       clientHandler.expectMsg(Aye)
-      serverHandler.expectMsgType[Received].data.decodeString("ASCII") should be("Captain on the bridge!")
+      serverHandler.expectMsgType[Received].data.decodeString("ASCII") should ===("Captain on the bridge!")
 
       serverHandler.send(serverConnection, Write(ByteString("For the king!"), Yes))
       serverHandler.expectMsg(Yes)
-      clientHandler.expectMsgType[Received].data.decodeString("ASCII") should be("For the king!")
+      clientHandler.expectMsgType[Received].data.decodeString("ASCII") should ===("For the king!")
 
       serverHandler.send(serverConnection, Close)
       serverHandler.expectMsg(Closed)
@@ -73,14 +153,50 @@ class TcpIntegrationSpec extends AkkaSpec("""
       override def bindOptions = List(SO.SendBufferSize(1024))
       override def connectOptions = List(SO.ReceiveBufferSize(1024))
     }
+
     "don't report Connected when endpoint isn't responding" in {
       val connectCommander = TestProbe()
-      // a "random" endpoint hopefully unavailable
-      val endpoint = new InetSocketAddress("10.226.182.48", 23825)
+      // a "random" endpoint hopefully unavailable since it's in the test-net IP range
+      val endpoint = new InetSocketAddress("192.0.2.1", 23825)
       connectCommander.send(IO(Tcp), Connect(endpoint))
       // expecting CommandFailed or no reply (within timeout)
       val replies = connectCommander.receiveWhile(1.second) { case m: Connected ⇒ m }
-      replies should be(Nil)
+      replies should ===(Nil)
+    }
+
+    "handle tcp connection actor death properly" in new TestSetup(shouldBindServer = false) {
+      val serverSocket = new ServerSocket(endpoint.getPort(), 100, endpoint.getAddress())
+      val connectCommander = TestProbe()
+      connectCommander.send(IO(Tcp), Connect(endpoint))
+
+      val accept = serverSocket.accept()
+      connectCommander.expectMsgType[Connected].remoteAddress should ===(endpoint)
+      val connectionActor = connectCommander.lastSender
+      connectCommander.send(connectionActor, PoisonPill)
+      failAfter(3 seconds) {
+        try {
+          accept.getInputStream.read() should ===(-1)
+        } catch {
+          case e: IOException ⇒ // this is also fine
+        }
+      }
+      verifyActorTermination(connectionActor)
+    }
+  }
+
+  def chitchat(
+    clientHandler:    TestProbe,
+    clientConnection: ActorRef,
+    serverHandler:    TestProbe,
+    serverConnection: ActorRef,
+    rounds:           Int       = 100) = {
+
+    val testData = ByteString(0)
+    (1 to rounds) foreach { _ ⇒
+      clientHandler.send(clientConnection, Write(testData))
+      serverHandler.expectMsg(Received(testData))
+      serverHandler.send(serverConnection, Write(testData))
+      clientHandler.expectMsg(Received(testData))
     }
   }
 

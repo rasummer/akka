@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
 
 package akka.japi.pf
@@ -10,7 +10,7 @@ private[pf] object CaseStatement {
   def empty[F, T](): PartialFunction[F, T] = PartialFunction.empty
 }
 
-private[pf] class CaseStatement[F, P, T](predicate: Predicate, apply: Apply[P, T])
+private[pf] class CaseStatement[-F, +P, T](predicate: Predicate, apply: Apply[P, T])
   extends PartialFunction[F, T] {
 
   override def isDefinedAt(o: F) = predicate.defined(o)

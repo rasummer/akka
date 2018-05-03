@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.io
 
 import akka.actor.Props
@@ -14,7 +15,7 @@ private[io] class UdpConnectedManager(udpConn: UdpConnectedExt)
 
   def receive = workerForCommandHandler {
     case c: Connect ⇒
-      val commander = sender() // cache because we create a function that will run asyncly
+      val commander = sender() // cache because we create a function that will run asynchly
       registry ⇒ Props(classOf[UdpConnection], udpConn, registry, commander, c)
   }
 

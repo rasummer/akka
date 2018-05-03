@@ -1,6 +1,7 @@
 /**
- * Copyright (C) 2009-2014 Typesafe Inc. <http://www.typesafe.com>
+ * Copyright (C) 2009-2018 Lightbend Inc. <https://www.lightbend.com>
  */
+
 package akka.cluster
 
 import language.postfixOps
@@ -50,6 +51,8 @@ abstract class LeaderDowningNodeThatIsUnreachableSpec(multiNodeConfig: LeaderDow
       awaitClusterUp(first, second, third, fourth)
 
       val fourthAddress = address(fourth)
+
+      enterBarrier("before-exit-fourth-node")
       runOn(first) {
         // kill 'fourth' node
         testConductor.exit(fourth, 0).await
